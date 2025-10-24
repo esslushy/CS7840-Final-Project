@@ -9,9 +9,9 @@ from entropy import mutual_info
 def discretization(activations_list,bins):
     n_bins = bins
 
-    bins = torch.linspace(min(torch.min(activations_list,axis=1)),
-                        max(torch.max(activations_list,axis=1)), n_bins+1)
-    activations_list[0] = torch.bucketize(activations_list, bins)
+    bins = torch.linspace(torch.min(activations_list),
+                        torch.max(activations_list), n_bins+1)
+    activations_list = torch.bucketize(activations_list, bins)
             
     return activations_list
 
@@ -36,7 +36,6 @@ def main():
     output, middle_rot = net(images_rot)
     images = torch.flatten(images, 1)
     images_rot = torch.flatten(images_rot, 1)
-
     print(mutual_info(middle, images))
     print(mutual_info(middle_rot, images_rot))
     print(mutual_info(middle, labels.reshape(-1, 1)))

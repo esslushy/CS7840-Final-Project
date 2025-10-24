@@ -33,4 +33,7 @@ def mutual_info(Y, X):
     return entropy(Y) - conditional_entropy(Y,X)
 
 if __name__ == "__main__":
-    print(entropy(torch.tensor([[1, 2, 3], [1,2,3], [2,4,6], [2,4,6]])))
+    print(entropy(torch.tensor([[1, 2, 3], [1,2,3], [2,4,6], [2,4,6], [5,6,7]])))
+    print(joint_entropy(torch.tensor([[1, 2, 3], [1,2,3], [2,4,6], [2,4,6], [5,6,7]]), torch.tensor([[1], [1], [2], [6], [7]])))
+    print(conditional_entropy(torch.tensor([[1, 2, 3], [1,2,3], [2,4,6], [2,4,6], [5,6,7]]), torch.tensor([[1], [1], [2], [6], [7]])))
+    print(mutual_info(torch.tensor([[1, 2, 3], [1,2,3], [2,4,6], [2,4,6], [5,6,7]]), torch.tensor([[1], [1], [2], [6], [7]])))
