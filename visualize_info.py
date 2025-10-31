@@ -6,6 +6,7 @@ import torchvision.transforms as transforms
 from entropy import mutual_info
 import numpy as np
 import matplotlib.pyplot as plt
+from MI import gaussian_mi
 
 # Discretization of continous values from the layers
 def discretization(activations_list,bins):
@@ -19,7 +20,9 @@ def discretization(activations_list,bins):
 
 def main():
     net = Net()
-    net.load_state_dict(torch.load(PATH, weights_only=True))
+    net.load_state_dict(torch.load(f"{PATH}.pth", weights_only=True))
+    net_rot = Net()
+    net_rot.load_state_dict(torch.load(f"{PATH}_rotate.pth", weights_only=True))
 
     transform = transforms.Compose(
     [transforms.ToTensor(),
@@ -35,17 +38,18 @@ def main():
     images, labels = next(iter(testloader))
     images_rot = torch.rot90(images, dims=(-2, -1))
     output, middle = net(images)
-    output_rot, middle_rot = net(images_rot)
+    output_rot, middle_rot = net_rot(images_rot)
     output = torch.nn.functional.softmax(output)
     output_rot = torch.nn.functional.softmax(output_rot)
-    print(output[0])
-    print(output_rot[0])
     images = torch.flatten(images, 1)
     images_rot = torch.flatten(images_rot, 1)
-    output = discretization(output, 30)
-    output_rot = discretization(output_rot, 30)
-    p1 = np.array([mutual_info(output, images), mutual_info(output, labels.reshape(-1, 1))])
-    p2 = np.array([mutual_info(output_rot, images_rot), mutual_info(output_rot, labels.reshape(-1, 1))])
+    print(gaussian_mi(middle, labels.reshape(-1, 1)))
+    print(gaussian_mi(middle_rot, labels.reshape(-1, 1)))
+    exit()
+    discretized = discretization(output, 30)
+    discretized_rot = discretization(output_rot, 30)
+    p1 = np.array([mutual_info(discretized, images), mutual_info(discretized, labels.reshape(-1, 1))])
+    p2 = np.array([mutual_info(discretized_rot, images_rot), mutual_info(discretized_rot, labels.reshape(-1, 1))])
     # Compute the distance
     distance = np.linalg.norm(p2 - p1)
 

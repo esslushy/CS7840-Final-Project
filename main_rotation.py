@@ -9,7 +9,8 @@ from project_parameters import PATH
 def main():
     transform = transforms.Compose(
     [transforms.ToTensor(),
-     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+     transforms.RandomRotation(degrees=(0, 360))])
 
     batch_size = 4
 
@@ -50,7 +51,7 @@ def main():
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"{PATH}.pth")
+    torch.save(net.state_dict(), f"{PATH}_rotate.pth")
 
 if __name__ == "__main__":
     main()

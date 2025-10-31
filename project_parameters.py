@@ -1,1 +1,1 @@
-PATH = './cifar_net.pth'
+PATH = "cifar_net"
