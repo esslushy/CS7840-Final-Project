@@ -43,7 +43,7 @@ def main():
             optimizer.zero_grad()
 
             # forward + backward + optimize
-            outputs, middle = net(inputs)
+            _, outputs, _ = net(inputs)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
