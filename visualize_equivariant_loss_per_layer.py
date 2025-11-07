@@ -20,7 +20,7 @@ def discretization(activations_list,bins):
 
 def main():
     net = Net()
-    net.load_state_dict(torch.load(f"{PATH}_rotate.pth", weights_only=True))
+    net.load_state_dict(torch.load(f"{PATH}.pth", weights_only=True))
 
     transform = transforms.Compose(
     [transforms.ToTensor(),
