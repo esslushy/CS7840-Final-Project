@@ -11,7 +11,8 @@ import json
 def main():
     transform = transforms.Compose(
     [transforms.ToTensor(),
-     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+     transforms.RandomRotation(degrees=(0, 360))])
 
     batch_size = 64
 
@@ -21,14 +22,15 @@ def main():
                                             download=True, transform=transform)
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
                                             shuffle=True, num_workers=2)
-    
-    batch_size = 10000
 
+    classes = ('plane', 'car', 'bird', 'cat',
+            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+    
     transform = transforms.Compose([
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
-
+    
     testset = torchvision.datasets.CIFAR10(root='./data', train=False,
                                         download=True, transform=transform)
     testloader = torch.utils.data.DataLoader(testset, batch_size=10000,
@@ -36,12 +38,10 @@ def main():
     
     test_images, test_labels = next(iter(testloader))
     test_images = test_images.to(device)
-
-    classes = ('plane', 'car', 'bird', 'cat',
-            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
     
     net = Net()
     net = net.to(device)
+    net.load_state_dict(torch.load(f"{PATH}.pth"))
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(net.parameters(), lr=0.0001, momentum=0.9)
@@ -75,9 +75,9 @@ def main():
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"{PATH}.pth")
+    torch.save(net.state_dict(), f"{PATH}_finetuned_rotate.pth")
 
-    with open("non_equivariant_model_equivariant_losses.json", "wt+") as f:
+    with open("finetuned_learned_equivariant_model_equivariant_losses.json", "wt+") as f:
         json.dump(equivariant_losses, f)
 
 if __name__ == "__main__":

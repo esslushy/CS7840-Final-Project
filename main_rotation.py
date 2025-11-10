@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.optim as optim
 from net import Net
 from project_parameters import PATH
+from utils import equiv_error_calc
+import json
 
 def main():
     transform = transforms.Compose(
@@ -24,11 +26,28 @@ def main():
     classes = ('plane', 'car', 'bird', 'cat',
             'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
     
+    transform = transforms.Compose([
+        transforms.ToTensor(), 
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    
+    testset = torchvision.datasets.CIFAR10(root='./data', train=False,
+                                        download=True, transform=transform)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=10000,
+                                            shuffle=False, num_workers=2)
+    
+    test_images, test_labels = next(iter(testloader))
+    test_images = test_images.to(device)
+    
     net = Net()
     net = net.to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(net.parameters(), lr=0.0001, momentum=0.9)
+
+    equivariant_losses = []
+
+    equivariant_losses.append(equiv_error_calc(net, test_images))
 
     for epoch in range(100):  # loop over the dataset multiple times
 
@@ -51,10 +70,14 @@ def main():
             # print statistics
             running_loss += loss.item()
         print(f'[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}')
+        equivariant_losses.append(equiv_error_calc(net, test_images))
 
     print('Finished Training')
 
     torch.save(net.state_dict(), f"{PATH}_rotate.pth")
+
+    with open("learned_equivariant_model_equivariant_losses.json", "wt+") as f:
+        json.dump(equivariant_losses, f)
 
 if __name__ == "__main__":
     main()
