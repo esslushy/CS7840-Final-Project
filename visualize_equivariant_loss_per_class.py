@@ -5,8 +5,10 @@ import torchvision
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 from utils import equiv_error_calc
+from argparse import ArgumentParser
+from vit import ViT
 
-def main():
+def main(vit: bool):
     batch_size = 10000
 
     transform = transforms.Compose([
@@ -25,8 +27,11 @@ def main():
             'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
     
 
-    net = Net()
-    net.load_state_dict(torch.load(f"{PATH}_ood.pth", weights_only=True))
+    if vit:
+        net = ViT(image_size=images.shape[2], patch_size=4, num_classes=10, dim=128, depth=1, heads=1, mlp_dim=128)
+    else:
+        net = Net()
+    net.load_state_dict(torch.load(f"{PATH}{'_vit' if vit else ''}.pth", weights_only=True))
     for i, c in enumerate(classes):
         net_error = equiv_error_calc(net, images[labels==i])
 
@@ -44,7 +49,10 @@ def main():
     plt.tight_layout()
 
     # Show the chart
-    plt.savefig(f"ood_equivariant_loss_per_class.pdf")
+    plt.savefig(f"non_equivariant{'_vit' if vit else ''}_loss_per_class.pdf")
 
 if __name__ == "__main__":
-    main()
+    args = ArgumentParser()
+    args.add_argument("--vit", help="Use ViT model", action="store_true")
+    args = args.parse_args()
+    main(args.vit)
