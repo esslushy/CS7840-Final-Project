@@ -7,8 +7,10 @@ from net import Net
 from project_parameters import PATH
 from utils import equiv_error_calc
 import json
+from argparse import ArgumentParser
+from vit import ViT
 
-def main():
+def main(vit):
     transform = transforms.Compose(
     [transforms.ToTensor(),
      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
@@ -39,7 +41,10 @@ def main():
     test_images, test_labels = next(iter(testloader))
     test_images = test_images.to(device)
     
-    net = Net()
+    if vit:
+        net = ViT(image_size=test_images.shape[2], patch_size=4, num_classes=10, dim=128, depth=1, heads=1, mlp_dim=128)
+    else:
+        net = Net()
     net = net.to(device)
 
     criterion = nn.CrossEntropyLoss()
@@ -74,10 +79,13 @@ def main():
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"{PATH}_rotate.pth")
+    torch.save(net.state_dict(), f"{PATH}{'_vit' if vit else ''}_rotate.pth")
 
-    with open("learned_equivariant_model_equivariant_losses.json", "wt+") as f:
+    with open(f"learned_equivariant_{'vit' if vit else 'model'}_equivariant_losses.json", "wt+") as f:
         json.dump(equivariant_losses, f)
 
 if __name__ == "__main__":
-    main()
+    args = ArgumentParser()
+    args.add_argument("--vit", help="Use ViT model", action="store_true")
+    args = args.parse_args()
+    main(args.vit)
