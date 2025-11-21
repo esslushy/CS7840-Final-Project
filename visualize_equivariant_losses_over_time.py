@@ -10,6 +10,7 @@ def main(equivariant_losses_pth: Path):
 
     fig = plt.figure(figsize=(12, 6),dpi=150)
     plt.xlabel("Layer")
+    plt.xticks(range(len(equivariant_losses[0])))
     plt.ylabel("Average Delta InfoNCE Loss")
 
     cmap = plt.get_cmap('gnuplot')

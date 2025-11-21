@@ -31,7 +31,7 @@ def main(vit: bool):
         net = ViT(image_size=images.shape[2], patch_size=4, num_classes=10, dim=128, depth=1, heads=1, mlp_dim=128)
     else:
         net = Net()
-    net.load_state_dict(torch.load(f"{PATH}{'_vit' if vit else ''}.pth", weights_only=True))
+    net.load_state_dict(torch.load(f"{PATH}{'_vit' if vit else ''}_ood.pth", weights_only=True))
     for i, c in enumerate(classes):
         net_error = equiv_error_calc(net, images[labels==i])
 
@@ -44,12 +44,13 @@ def main(vit: bool):
     # Add titles and labels
     plt.title("Delta InfoNCE Between Rotated and Non Rotated Images Per Class")
     plt.xlabel("Layer Number")
+    plt.xticks(range(3 if vit else 5))
     plt.ylabel("Delta InfoNCE Loss (Lower is Better)")
 
     plt.tight_layout()
 
     # Show the chart
-    plt.savefig(f"non_equivariant{'_vit' if vit else ''}_loss_per_class.pdf")
+    plt.savefig(f"ood_equivariant{'_vit' if vit else ''}_loss_per_class.pdf")
 
 if __name__ == "__main__":
     args = ArgumentParser()
