@@ -9,8 +9,9 @@ from utils import equiv_error_calc
 import json
 from argparse import ArgumentParser
 from vit import ViT
+from naive_net import NaiveNet
 
-def main(vit):
+def main(vit: bool, naive: bool):
     transform = transforms.Compose(
     [transforms.ToTensor(),
      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
@@ -43,6 +44,8 @@ def main(vit):
     
     if vit:
         net = ViT(image_size=test_images.shape[2], patch_size=4, num_classes=10, dim=128, depth=1, heads=1, mlp_dim=128)
+    elif naive:
+        net = NaiveNet()
     else:
         net = Net()
     net = net.to(device)
@@ -79,13 +82,14 @@ def main(vit):
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"{PATH}{'_vit' if vit else ''}_rotate.pth")
+    torch.save(net.state_dict(), f"{PATH}{'_vit' if vit else '_naive' if naive else ''}_rotate.pth")
 
-    with open(f"learned_equivariant_{'vit' if vit else 'model'}_equivariant_losses.json", "wt+") as f:
+    with open(f"learned_equivariant_{'vit' if vit else 'naive' if naive else 'model'}_equivariant_losses.json", "wt+") as f:
         json.dump(equivariant_losses, f)
 
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("--vit", help="Use ViT model", action="store_true")
+    args.add_argument("--naive", help="Use naive model", action="store_true")
     args = args.parse_args()
-    main(args.vit)
+    main(args.vit, args.naive)
