@@ -7,8 +7,9 @@ import matplotlib.pyplot as plt
 from utils import equiv_error_calc
 from argparse import ArgumentParser
 from vit import ViT
+from naive_net import NaiveNet
 
-def main(vit: bool):
+def main(vit: bool, naive: bool):
     batch_size = 10000
 
     transform = transforms.Compose([
@@ -29,9 +30,11 @@ def main(vit: bool):
 
     if vit:
         net = ViT(image_size=images.shape[2], patch_size=4, num_classes=10, dim=128, depth=1, heads=1, mlp_dim=128)
+    elif naive:
+        net = NaiveNet()
     else:
         net = Net()
-    net.load_state_dict(torch.load(f"{PATH}{'_vit' if vit else ''}_ood.pth", weights_only=True))
+    net.load_state_dict(torch.load(f"{PATH}{'_vit' if vit else '_naive' if naive else ''}_ood.pth", weights_only=True))
     for i, c in enumerate(classes):
         net_error = equiv_error_calc(net, images[labels==i])
 
@@ -44,16 +47,17 @@ def main(vit: bool):
     # Add titles and labels
     plt.title("Delta InfoNCE Between Rotated and Non Rotated Images Per Class")
     plt.xlabel("Layer Number")
-    plt.xticks(range(3 if vit else 5))
+    plt.xticks(range(3 if vit else 1 if naive else 5))
     plt.ylabel("Delta InfoNCE Loss (Lower is Better)")
 
     plt.tight_layout()
 
     # Show the chart
-    plt.savefig(f"ood_equivariant{'_vit' if vit else ''}_loss_per_class.pdf")
+    plt.savefig(f"ood_equivariant{'_vit' if vit else '_naive' if naive else ''}_loss_per_class.pdf")
 
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("--vit", help="Use ViT model", action="store_true")
+    args.add_argument("--naive", help="Use naive model", action="store_true")
     args = args.parse_args()
-    main(args.vit)
+    main(args.vit, args.naive)
