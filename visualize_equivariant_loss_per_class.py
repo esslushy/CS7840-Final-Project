@@ -53,7 +53,7 @@ def main(vit: bool, naive: bool):
     plt.tight_layout()
 
     # Show the chart
-    plt.savefig(f"ood_equivariant{'_vit' if vit else '_naive' if naive else ''}_loss_per_class.pdf")
+    plt.savefig(f"ood_dog_equivariant{'_vit' if vit else '_naive' if naive else ''}_loss_per_class.pdf")
 
 if __name__ == "__main__":
     args = ArgumentParser()

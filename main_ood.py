@@ -70,7 +70,7 @@ def main(vit: bool, naive: bool):
             labels = labels.to(device)
 
             # Apply random rotations to all but class 0
-            inputs[labels!=0] = random_rot(inputs[labels!=0])
+            inputs[labels!=5] = random_rot(inputs[labels!=5])
 
             # zero the parameter gradients
             optimizer.zero_grad()
@@ -88,9 +88,9 @@ def main(vit: bool, naive: bool):
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"{PATH}{'_vit' if vit else '_naive' if naive else ''}_ood.pth")
+    torch.save(net.state_dict(), f"{PATH}{'_vit' if vit else '_naive' if naive else ''}_ood_dog.pth")
 
-    with open(f"ood_equivariant_{'vit' if vit else 'naive' if naive else 'model'}_equivariant_losses.json", "wt+") as f:
+    with open(f"ood_dog_equivariant_{'vit' if vit else 'naive' if naive else 'model'}_equivariant_losses.json", "wt+") as f:
         json.dump(equivariant_losses, f)
 
 if __name__ == "__main__":
