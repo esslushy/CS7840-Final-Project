@@ -34,7 +34,7 @@ def main(vit: bool, naive: bool):
         net = NaiveNet()
     else:
         net = Net()
-    net.load_state_dict(torch.load(f"{PATH}{'_vit' if vit else '_naive' if naive else ''}_ood.pth", weights_only=True))
+    net.load_state_dict(torch.load(f"{PATH}{'_vit' if vit else '_naive' if naive else ''}_ood_plane.pth", weights_only=True))
     for i, c in enumerate(classes):
         net_error = equiv_error_calc(net, images[labels==i])
 
@@ -49,11 +49,12 @@ def main(vit: bool, naive: bool):
     plt.xlabel("Layer Number")
     plt.xticks(range(3 if vit else 1 if naive else 5))
     plt.ylabel("Delta InfoNCE Loss (Lower is Better)")
+    plt.ylim(bottom=0)
 
     plt.tight_layout()
 
     # Show the chart
-    plt.savefig(f"ood_dog_equivariant{'_vit' if vit else '_naive' if naive else ''}_loss_per_class.pdf")
+    plt.savefig(f"ood_plane_equivariant{'_vit' if vit else '_naive' if naive else ''}_loss_per_class.pdf")
 
 if __name__ == "__main__":
     args = ArgumentParser()
