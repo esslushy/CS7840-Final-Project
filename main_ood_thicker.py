@@ -10,7 +10,7 @@ import json
 from argparse import ArgumentParser
 from vit import ViT
 
-def main(vit: bool):
+def main(holdout: str, vit: bool):
     transform = transforms.Compose(
     [transforms.ToTensor(),
      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -67,7 +67,7 @@ def main(vit: bool):
             labels = labels.to(device)
 
             # Apply random rotations to all but class 0
-            inputs[labels!=0] = random_rot(inputs[labels!=0])
+            inputs[labels!=classes.index(holdout)] = random_rot(inputs[labels!=classes.index(holdout)])
 
             # zero the parameter gradients
             optimizer.zero_grad()
@@ -85,13 +85,14 @@ def main(vit: bool):
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"{PATH}{'_vit' if vit else ''}_thicker_ood.pth")
+    torch.save(net.state_dict(), f"{PATH}{'_vit' if vit else ''}_thicker_ood_{holdout}.pth")
 
-    with open(f"ood_equivariant_{'vit' if vit else 'model'}_thicker_equivariant_losses.json", "wt+") as f:
+    with open(f"ood_{holdout}_equivariant_{'vit' if vit else 'model'}_thicker_equivariant_losses.json", "wt+") as f:
         json.dump(equivariant_losses, f)
 
 if __name__ == "__main__":
     args = ArgumentParser()
+    args.add_argument("holdout", help="The holdout class", type=str)
     args.add_argument("--vit", help="Use ViT model", action="store_true")
     args = args.parse_args()
-    main(args.vit)
+    main(args.holdout, args.vit)
