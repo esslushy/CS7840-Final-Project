@@ -11,7 +11,7 @@ from argparse import ArgumentParser
 from vit import ViT
 from naive_net import NaiveNet
 
-def main(vit: bool, naive: bool):
+def main(holdout: str, vit: bool, naive: bool):
     transform = transforms.Compose(
     [transforms.ToTensor(),
      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -70,7 +70,7 @@ def main(vit: bool, naive: bool):
             labels = labels.to(device)
 
             # Apply random rotations to all but class 0
-            inputs[labels!=0] = random_rot(inputs[labels!=0])
+            inputs[labels!=classes.index(holdout)] = random_rot(inputs[labels!=classes.index(holdout)])
 
             # zero the parameter gradients
             optimizer.zero_grad()
@@ -88,14 +88,15 @@ def main(vit: bool, naive: bool):
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"{PATH}{'_vit' if vit else '_naive' if naive else ''}_ood_plane.pth")
+    torch.save(net.state_dict(), f"{PATH}{'_vit' if vit else '_naive' if naive else ''}_ood_{holdout}.pth")
 
-    with open(f"ood_plane_equivariant_{'vit' if vit else 'naive' if naive else 'model'}_equivariant_losses.json", "wt+") as f:
+    with open(f"ood_{holdout}_equivariant_{'vit' if vit else 'naive' if naive else 'model'}_equivariant_losses.json", "wt+") as f:
         json.dump(equivariant_losses, f)
 
 if __name__ == "__main__":
     args = ArgumentParser()
+    args.add_argument("holdout", help="The holdout class", type=str)
     args.add_argument("--vit", help="Use ViT model", action="store_true")
     args.add_argument("--naive", help="Use naive model", action="store_true")
     args = args.parse_args()
-    main(args.vit, args.naive)
+    main(args.holdout, args.vit, args.naive)
