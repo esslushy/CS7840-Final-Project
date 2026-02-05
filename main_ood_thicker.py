@@ -92,7 +92,7 @@ def main(holdout: str, vit: bool):
 
 if __name__ == "__main__":
     args = ArgumentParser()
-    args.add_argument("holdout", help="The holdout class", type=str)
+    args.add_argument("holdout", help="The holdout class", type=str, choices=('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck'))
     args.add_argument("--vit", help="Use ViT model", action="store_true")
     args = args.parse_args()
     main(args.holdout, args.vit)

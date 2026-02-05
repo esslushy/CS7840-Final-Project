@@ -1,5 +1,5 @@
 import torch
-from MI import info_nce
+from HSIC import hsic_normalized
 import numpy as np
 
 def equiv_error_calc(net, images):
@@ -15,10 +15,9 @@ def equiv_error_calc(net, images):
         output_rot270, _, layers_rot270 = net(images_rot270)
 
     for rep, rep90, rep180, rep270 in zip(layers, layers_rot90, layers_rot180, layers_rot270):
-        baseline = info_nce(rep, rep)
         net_errors.append(np.mean([
-            (info_nce(rep90, rep) - baseline).item(),
-            (info_nce(rep180, rep) - baseline).item(),
-            (info_nce(rep270, rep) - baseline).item(),
+            (hsic_normalized(rep90, rep)).item(),
+            (hsic_normalized(rep180, rep)).item(),
+            (hsic_normalized(rep270, rep)).item(),
         ]))
     return net_errors
