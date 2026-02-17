@@ -1,7 +1,11 @@
 import torch
 import numpy as np
 from torch.autograd import Variable, grad
+from functools import cache
 
+# Gotten from https://github.com/choasma/HSIC-bottleneck/blob/master/source/hsicbt/math/hsic.py
+
+@cache
 def sigma_estimation(X, Y):
     """ sigma from median distance
     """
@@ -16,6 +20,7 @@ def sigma_estimation(X, Y):
         med=1E-2
     return med
 
+@cache
 def distmat(X):
     """ distance matrix
     """
@@ -26,6 +31,7 @@ def distmat(X):
     D = torch.abs(D)
     return D
 
+@cache
 def kernelmat(X, sigma):
     """ kernel matrix baker
     """
@@ -50,11 +56,13 @@ def kernelmat(X, sigma):
 
     return Kxc
 
+@cache
 def distcorr(X, sigma=1.0):
     X = distmat(X)
     X = torch.exp( -X / (2.*sigma*sigma))
     return torch.mean(X)
 
+@cache
 def compute_kernel(x, y):
     x_size = x.size(0)
     y_size = y.size(0)
@@ -66,6 +74,7 @@ def compute_kernel(x, y):
     kernel_input = (tiled_x - tiled_y).pow(2).mean(2)/float(dim)
     return torch.exp(-kernel_input) # (x_size, y_size)
 
+@cache
 def mmd(x, y, sigma=None, use_cuda=True, to_numpy=False):
     m = int(x.size()[0])
     H = torch.eye(m) - (1./m) * torch.ones([m,m])
@@ -93,6 +102,7 @@ def mmd(x, y, sigma=None, use_cuda=True, to_numpy=False):
 
     return mmdval
 
+@cache
 def mmd_pxpy_pxy(x,y,sigma=None,use_cuda=True, to_numpy=False):
     """
     """
@@ -118,6 +128,7 @@ def mmd_pxpy_pxy(x,y,sigma=None,use_cuda=True, to_numpy=False):
     mmd_pxpy_pxy_val = A - 2*B + C 
     return mmd_pxpy_pxy_val
 
+@cache
 def hsic_regular(x, y, sigma=None, use_cuda=True, to_numpy=False):
     """
     """
@@ -127,6 +138,7 @@ def hsic_regular(x, y, sigma=None, use_cuda=True, to_numpy=False):
     Pxy = torch.mean(KtK)
     return Pxy
 
+@cache
 def hsic_normalized(x, y, sigma=None, use_cuda=True, to_numpy=True):
     """
     """

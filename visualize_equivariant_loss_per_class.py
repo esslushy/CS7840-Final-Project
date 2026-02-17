@@ -49,9 +49,7 @@ def main(vit: bool, naive: bool):
     plt.xlabel("Layer Number")
     plt.xticks(range(3 if vit else 1 if naive else 5))
     plt.ylabel("Delta InfoNCE Loss (Lower is Better)")
-    plt.ylim(bottom=0)
-    if naive:
-        plt.ylim(top=4)
+    plt.ylim(bottom=0, top=1)
 
     plt.tight_layout()
 
