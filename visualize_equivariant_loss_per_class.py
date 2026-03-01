@@ -45,10 +45,10 @@ def main(vit: bool, naive: bool):
     plt.legend()
 
     # Add titles and labels
-    plt.title("Delta InfoNCE Between Rotated and Non Rotated Images Per Class")
+    plt.title("HSIC Between Rotated and Non Rotated Images Per Class")
     plt.xlabel("Layer Number")
     plt.xticks(range(3 if vit else 1 if naive else 5))
-    plt.ylabel("Delta InfoNCE Loss (Lower is Better)")
+    plt.ylabel("HSIC (Higher is Better)")
     plt.ylim(bottom=0, top=1)
 
     plt.tight_layout()

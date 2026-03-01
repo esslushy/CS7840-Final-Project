@@ -28,7 +28,7 @@ class Net(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-def run_experiment(steps=1000):
+def run_experiment(steps=2000):
 
     torch.manual_seed(0)
 

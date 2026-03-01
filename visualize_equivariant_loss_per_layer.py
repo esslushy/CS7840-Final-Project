@@ -74,9 +74,9 @@ def main():
         plt.axhline(ref_value, color="black", linestyle="--", label=f"{ref_label} = {ref_value}")
 
         # Add titles and labels
-        plt.title("InfoNCE Mutual Information Meausure Between Non-Rotated and Rotated Images")
+        plt.title("HSIC Between Non-Rotated and Rotated Images")
         plt.xlabel("Degrees of Rotation")
-        plt.ylabel("InfoNCE Loss (Lower is Better)")
+        plt.ylabel("HSIC Loss (Higher is Better)")
         plt.ylim(bottom=0, top=1)
 
         plt.tight_layout()
