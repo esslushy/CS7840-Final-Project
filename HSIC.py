@@ -1,91 +1,90 @@
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
+from typing import List, Dict, Tuple, Optional
 
 
-# ------------------------------------------------------------
-# Utilities
-# ------------------------------------------------------------
+def center_kernel(K: torch.Tensor) -> torch.Tensor:
+    """Center a kernel matrix: K_c = HKH where H = I - (1/n)11^T."""
+    n = K.shape[0]
+    H = torch.eye(n, device=K.device) - torch.ones((n, n), device=K.device) / n
+    return H @ K @ H
 
-def flatten_rep(rep):
+
+def linear_kernel(X: torch.Tensor) -> torch.Tensor:
+    """Compute the linear kernel matrix K = XX^T."""
+    return X @ X.T
+
+
+def hsic(X: torch.Tensor, Y: torch.Tensor, unbiased: bool = True) -> float:
     """
-    Flattens representation to (batch, d).
-    Works for linear or convolutional layers.
+    Compute the Hilbert-Schmidt Independence Criterion (HSIC)
+    with a linear kernel.
+
+    Args:
+        X: Representation matrix of shape (n_samples, features_x).
+        Y: Representation matrix of shape (n_samples, features_y).
+        unbiased: If True, use the unbiased estimator (Song et al., 2012).
+                  If False, use the biased estimator.
+
+    Returns:
+        HSIC value (float).
     """
-    if rep.dim() > 2:
-        return rep.view(rep.size(0), -1)
-    return rep
+    n = X.shape[0]
+    assert X.shape[0] == Y.shape[0], "X and Y must have the same number of samples."
+
+    X = torch.flatten(X, 1)
+    Y = torch.flatten(Y, 1)
+
+    K = linear_kernel(X)
+    L = linear_kernel(Y)
+
+    if unbiased:
+        # Unbiased HSIC estimator
+        # Zero out diagonals
+        K.fill_diagonal_(0.0)
+        L.fill_diagonal_(0.0)
+
+        trace_KL = torch.trace(K @ L)
+        sum_K = K.sum()
+        sum_L = L.sum()
+        sum_KL = (K.sum(axis=1) * L.sum(axis=1)).sum()  # sum of element-wise row sums product
+
+        # Unbiased formula: 1/n(n-3) * [tr(KL) + sum(K)*sum(L)/((n-1)(n-2)) - 2*sum(K.*L row sums)/(n-2)]
+        result = (
+            trace_KL
+            + (sum_K * sum_L) / ((n - 1) * (n - 2))
+            - 2.0 * sum_KL / (n - 2)
+        )
+        return result / (n * (n - 3))
+    else:
+        # Biased HSIC estimator: (1/n^2) * tr(KHLH)
+        Kc = center_kernel(K)
+        Lc = center_kernel(L)
+        return torch.trace(Kc @ Lc) / (n * n)
 
 
-def normalize_features(X, eps=1e-8):
+def cka(X: torch.Tensor, Y: torch.Tensor, unbiased: bool = True) -> float:
     """
-    Per-feature standardization:
-    zero mean, unit variance.
+    Compute Centered Kernel Alignment (CKA) with a linear kernel.
+
+    CKA(X, Y) = HSIC(X, Y) / sqrt(HSIC(X, X) * HSIC(Y, Y))
+
+    Args:
+        X: Representation matrix of shape (n_samples, features_x).
+        Y: Representation matrix of shape (n_samples, features_y).
+        unbiased: If True, use the unbiased HSIC estimator.
+
+    Returns:
+        CKA similarity score in [0, 1] (though unbiased can slightly exceed bounds).
     """
-    mean = X.mean(dim=0, keepdim=True)
-    std = X.std(dim=0, keepdim=True) + eps
-    return (X - mean) / std
+    hsic_xy = hsic(X, Y, unbiased=unbiased)
+    hsic_xx = hsic(X, X, unbiased=unbiased)
+    hsic_yy = hsic(Y, Y, unbiased=unbiased)
 
-
-def compute_sigma2(X):
-    """
-    Automatic sigma^2 = 2d rule.
-    Assumes X is normalized and shape (batch, d).
-    """
-    d = X.shape[1]
-    return 2.0 * d
-
-def compute_sigma2_median(X):
-    with torch.no_grad():
-        D2 = torch.cdist(X, X, p=2) ** 2
-        median = torch.median(D2[D2 > 0])
-    return median
-
-def rbf_kernel(X, sigma2):
-    """
-    RBF kernel matrix using sigma^2.
-    """
-    # Pairwise squared distances
-    XX = torch.cdist(X, X, p=2) ** 2
-    K = torch.exp(-XX / (2.0 * sigma2))
-    return K
-
-
-def normalized_hsic(X, Y, eps=1e-8):
-    """
-    Computes normalized HSIC (CKA-style).
-
-    Steps:
-    1) Flatten
-    2) Normalize features
-    3) Compute sigma^2 = 2d automatically
-    4) Compute centered RBF kernels
-    5) Normalize
-    """
-
-    X = flatten_rep(X)
-    Y = flatten_rep(Y)
-
-    X = normalize_features(X)
-    Y = normalize_features(Y)
-
-    sigma2_x = compute_sigma2_median(X)
-    print(sigma2_x)
-    sigma2_y = compute_sigma2_median(Y)
-    print(sigma2_y)
-
-    K = rbf_kernel(X, sigma2_x)
-    L = rbf_kernel(Y, sigma2_y)
-
-    K.fill_diagonal_(0)
-    L.fill_diagonal_(0)
-
-    hsic = (K * L).sum()
-
-    norm_x = torch.sqrt((K * K).sum() + eps)
-    norm_y = torch.sqrt((L * L).sum() + eps)
-
-    return hsic / (norm_x * norm_y + eps)
-
+    denom = torch.sqrt(hsic_xx * hsic_yy)
+    if denom < 1e-10:
+        return torch.tensor(0.0, dtype=torch.float32, device=X.device)
+    return hsic_xy / denom
 
 # ------------------------------------------------------------
 # Equivariance Tracking
@@ -111,6 +110,6 @@ if __name__ == "__main__":
 
     rotated_vectors = vectors @ R.T
 
-    print(normalized_hsic(vectors, vectors))
-    print(normalized_hsic(vectors, rotated_vectors))
-    print(normalized_hsic(vectors, torch.randn(100, 3)))
+    print(cka(vectors, vectors))
+    print(cka(vectors, rotated_vectors))
+    print(cka(vectors, torch.randn(100, 3)))

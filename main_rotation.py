@@ -4,7 +4,7 @@ import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.optim as optim
 from net import Net
-from project_parameters import PATH
+from project_parameters import PATH, NUM_EPOCHS
 from utils import equiv_error_calc
 import json
 from argparse import ArgumentParser
@@ -57,7 +57,7 @@ def main(vit: bool, naive: bool):
 
     equivariant_losses.append(equiv_error_calc(net, test_images))
 
-    for epoch in range(100):  # loop over the dataset multiple times
+    for epoch in range(NUM_EPOCHS):  # loop over the dataset multiple times
 
         running_loss = 0.0
         for i, data in enumerate(trainloader):

@@ -12,7 +12,7 @@ def main(equivariant_losses_pth: Path):
     plt.xlabel("Layer")
     plt.xticks(range(len(equivariant_losses[0])))
     plt.ylim(bottom=0, top=1)
-    plt.ylabel("Procrustes (Lower is Better)")
+    plt.ylabel("HSIC (Higher is More Equivariant)")
 
     cmap = plt.get_cmap('gnuplot')
     colors = [cmap(i) for i in np.linspace(0, 1, len(equivariant_losses))]

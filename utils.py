@@ -1,6 +1,5 @@
 import torch
-from HSIC import normalized_hsic, flatten_rep
-from scipy.spatial import procrustes
+from HSIC import cka
 import numpy as np
 
 def equiv_error_calc(net, images):
@@ -29,9 +28,9 @@ def equiv_error_calc(net, images):
         layers, layers_rot90, layers_rot180, layers_rot270
     ):
         score = np.mean([
-            procrustes(flatten_rep(rep).cpu().numpy(), flatten_rep(rep90).cpu().numpy())[2],
-            procrustes(flatten_rep(rep).cpu().numpy(), flatten_rep(rep180).cpu().numpy())[2],
-            procrustes(flatten_rep(rep).cpu().numpy(), flatten_rep(rep270).cpu().numpy())[2],
+            cka(rep, rep90, False).item(),
+            cka(rep, rep180, False).item(),
+            cka(rep, rep270, False).item(),
         ])
         net_errors.append(score)
 
