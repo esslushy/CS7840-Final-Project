@@ -11,7 +11,7 @@ from pathlib import Path
 
 CLASSES = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 NUM_EPOCHS = 200
-BATCH_SIZE = 10000
+BATCH_SIZE = 64
 
 def main(model: str, kernel: str, rotation: bool, holdout: str, thicker: bool, finetune: Path):
     transform_operations = [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
