@@ -1,8 +1,9 @@
 import torch
 from HSIC import cka
 import numpy as np
+from typing import Literal
 
-def equiv_error_calc(net, images):
+def equiv_error_calc(net, images, kernel: Literal["linear", "rbf"] = "linear"):
     """
     Computes layerwise equivariance score using
     normalized HSIC with automatic sigma^2.
@@ -28,10 +29,29 @@ def equiv_error_calc(net, images):
         layers, layers_rot90, layers_rot180, layers_rot270
     ):
         score = np.mean([
-            cka(rep, rep90, False).item(),
-            cka(rep, rep180, False).item(),
-            cka(rep, rep270, False).item(),
+            cka(rep, rep90, False, kernel).item(),
+            cka(rep, rep180, False, kernel).item(),
+            cka(rep, rep270, False, kernel).item(),
         ])
         net_errors.append(score)
 
     return net_errors
+
+def split_array_randomly(arr):
+    n = len(arr)
+    indices = np.random.permutation(n)
+    return arr[indices[:n // 2]], arr[indices[n // 2:]]
+
+def baseline_cka_computation(net, images, kernel: Literal["linear", "rbf"] = "linear"):
+    cka_baselines = []
+
+    images_x, images_y = split_array_randomly(images)
+
+    with torch.inference_mode():
+        _, _, layers_x = net(images_x)
+        _, _, layers_y = net(images_y)
+
+    for rep_x, rep_y in zip(layers_x, layers_y):
+        cka_baselines.append(cka(rep_x, rep_y, False, kernel).item())
+
+    return cka_baselines
