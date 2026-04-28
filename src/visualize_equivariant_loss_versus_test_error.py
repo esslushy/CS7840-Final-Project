@@ -28,7 +28,7 @@ def main(statistics_pth: Path):
         for jdx in range(num_epochs):
             ax.plot(statistics["test_losses"][jdx], statistics["equivariant_losses"][jdx][idx],
                     marker='o', c=colors[jdx])
-            ax.plot(statistics["test_losses"][jdx], statistics["cka_baseline"][jdx][idx],
+            ax.plot(statistics["test_losses"][jdx], statistics["baseline_cka"][jdx][idx],
                     marker='x', c=colors[jdx], linestyle='none', alpha=0.5)
 
     # Legend entries for marker styles

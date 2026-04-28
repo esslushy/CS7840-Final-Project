@@ -9,7 +9,7 @@ def main(statistics_pth: Path):
         data = json.load(f)
 
     equivariant_losses = data["equivariant_losses"]
-    cka_baseline = data["cka_baseline"]
+    cka_baseline = data["baseline_cka"]
 
     fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
     ax.set_xlabel("Layer")
