@@ -11,24 +11,20 @@ from pathlib import Path
 
 CLASSES = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 NUM_EPOCHS = 200
+BATCH_SIZE = 10000
 
-def main(vit: bool, naive: bool, kernel: str, rotation: bool, holdout: str, thicker: bool, finetune: Path):
+def main(model: str, kernel: str, rotation: bool, holdout: str, thicker: bool, finetune: Path):
     transform_operations = [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     if rotation and not holdout:
         transform_operations.append(transforms.RandomRotation(degrees=(0, 360)))
     transform_train = transforms.Compose(transform_operations)
 
-    batch_size = 64
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
                                             download=True, transform=transform_train)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
                                             shuffle=True, num_workers=2)
-    
-    batch_size = 10000
-
     transform_test = transforms.Compose([
         transforms.ToTensor(), 
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
@@ -36,18 +32,20 @@ def main(vit: bool, naive: bool, kernel: str, rotation: bool, holdout: str, thic
 
     testset = torchvision.datasets.CIFAR10(root='./data', train=False,
                                         download=True, transform=transform_test)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=10000,
+    testloader = torch.utils.data.DataLoader(testset, batch_size=10000, # Get all of the images.
                                             shuffle=False, num_workers=2)
-    
     test_images, test_labels = next(iter(testloader))
     test_images = test_images.to(device)
+    test_labels = test_labels.to(device)
     
-    if vit:
-        net = ViT(image_size=test_images.shape[2], patch_size=4, num_classes=10, dim=256 if thicker else 128, depth=1, heads=1, mlp_dim=128)
-    elif naive:
+    if model == "vit":
+        net = ViT(image_size=test_images.shape[2], patch_size=4, num_classes=10, dim=256 if thicker else 128, depth=1, heads=1, mlp_dim=256 if thicker else 128)
+    elif model == "naive":
         net = NaiveNet()
-    else:
+    elif model == "cnn":
         net = CNN(width1=256 if thicker else 120, width2=256 if thicker else 84)
+    else:
+        raise ValueError(f"No such model {model}")
     net = net.to(device)
     if finetune:
         net.load_state_dict(torch.load(finetune, weights_only=True))
@@ -63,7 +61,7 @@ def main(vit: bool, naive: bool, kernel: str, rotation: bool, holdout: str, thic
 
     net.eval()
     statistics["equivariant_losses"].append(equiv_error_calc(net, test_images, kernel))
-    statistics["test_losses"].append(criterion(net(test_images), test_labels).item())
+    statistics["test_losses"].append(criterion(net(test_images)[1], test_labels).item())
     statistics["baseline_cka"].append(baseline_cka_computation(net, test_images, kernel))
 
     if holdout:
@@ -96,20 +94,19 @@ def main(vit: bool, naive: bool, kernel: str, rotation: bool, holdout: str, thic
         print(f'[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}')
         net.eval()
         statistics["equivariant_losses"].append(equiv_error_calc(net, test_images, kernel))
-        statistics["test_losses"].append(criterion(net(test_images), test_labels).item())
+        statistics["test_losses"].append(criterion(net(test_images)[1], test_labels).item())
         statistics["baseline_cka"].append(baseline_cka_computation(net, test_images, kernel))
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"models/cifar_{'vit' if vit else 'naive' if naive else 'cnn'}.pth")
+    torch.save(net.state_dict(), f"models/cifar_{model}.pth")
 
-    with open(f"results/{'learned_equivariant' if rotation else 'non_equivariant'}_{'vit' if vit else 'naive' if naive else 'cnn'}{'_thicker' if thicker else ''}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
+    with open(f"results/{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
         json.dump(statistics, f)
 
 if __name__ == "__main__":
     args = ArgumentParser()
-    args.add_argument("--vit", help="Use ViT model", action="store_true")
-    args.add_argument("--naive", help="Use naive model", action="store_true")
+    args.add_argument("--model", help="Which model to use", type=str, choices=("cnn", "naive", "vit"), default="cnn")
     args.add_argument("--kernel", help="Which kernel to use for CKA", type=str, choices=["rbf", "linear"], default="linear")
     args.add_argument("--rotation", help="Whether to train with rotation applied", action="store_true")
     args.add_argument("--holdout", help="The class to hold out from rotation", type=str, choices=CLASSES)
@@ -120,7 +117,7 @@ if __name__ == "__main__":
     if args.holdout and not args.rotation:
         raise Exception("Can't hold out class from rotation if not doing rotation.")
     
-    if args.naive and args.thicker:
+    if args.model == "naive" and args.thicker:
         raise Exception("Can't make a thicker naive model.")
     
-    main(args.vit, args.naive, args.kernel, args.rotation, args.holdout, args.thicker, args.finetune)
+    main(args.model, args.kernel, args.rotation, args.holdout, args.thicker, args.finetune)
