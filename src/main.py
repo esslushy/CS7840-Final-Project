@@ -54,24 +54,24 @@ def main(model: str, kernel: str, rotation: bool, holdout: str, thicker: bool, f
     optimizer = optim.SGD(net.parameters(), lr=0.0001, momentum=0.9)
 
     statistics = {
-        "equivariant_losses": [],
-        "test_losses": [],
+        "equivariant_loss": [],
+        "train_loss": [],
+        "train_accuracy": [],
+        "test_loss": [],
+        "test_accuracy": [],
         "baseline_cka": []
     }
 
-    net.eval()
-    statistics["equivariant_losses"].append(equiv_error_calc(net, test_images, kernel))
-    statistics["test_losses"].append(criterion(net(test_images)[1], test_labels).item())
-    statistics["baseline_cka"].append(baseline_cka_computation(net, test_images, kernel))
+    update_statistics(kernel, test_images, test_labels, net, criterion, statistics, trainloader, device)
 
     if holdout:
         random_rot = transforms.RandomRotation(degrees=(0, 360))
 
-    for epoch in range(NUM_EPOCHS):  # loop over the dataset multiple times
+    for epoch in range(NUM_EPOCHS):
         net.train()
         running_loss = 0.0
-        for i, data in enumerate(trainloader):
-            # get the inputs; data is a list of [inputs, labels]
+        running_accuracy = 0.0
+        for data in trainloader:
             inputs, labels = data
             inputs = inputs.to(device)
             labels = labels.to(device)
@@ -80,22 +80,17 @@ def main(model: str, kernel: str, rotation: bool, holdout: str, thicker: bool, f
                 # Apply random rotations to all but holdout
                 inputs[labels!=CLASSES.index(holdout)] = random_rot(inputs[labels!=CLASSES.index(holdout)])
 
-            # zero the parameter gradients
             optimizer.zero_grad()
 
-            # forward + backward + optimize
-            _, outputs, _ = net(inputs)
-            loss = criterion(outputs, labels)
+            output, logits, _ = net(inputs)
+            loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
 
-            # print statistics
             running_loss += loss.item()
-        print(f'[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}')
-        net.eval()
-        statistics["equivariant_losses"].append(equiv_error_calc(net, test_images, kernel))
-        statistics["test_losses"].append(criterion(net(test_images)[1], test_labels).item())
-        statistics["baseline_cka"].append(baseline_cka_computation(net, test_images, kernel))
+            running_accuracy += accuracy(output, labels).item()
+        print(f'[{epoch + 1}] loss: {running_loss / len(trainloader):.3f} accuracy: {running_accuracy / len(trainloader):.3f}')
+        update_statistics(kernel, test_images, test_labels, net, criterion, statistics, trainloader, device)
 
     print('Finished Training')
 
@@ -103,6 +98,31 @@ def main(model: str, kernel: str, rotation: bool, holdout: str, thicker: bool, f
 
     with open(f"results/{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
         json.dump(statistics, f)
+
+def update_statistics(kernel, test_images, test_labels, net, criterion, statistics, trainloader, device):
+    net.train()
+    running_loss = 0.0
+    running_accuracy = 0.0
+    for data in trainloader:
+        inputs, labels = data
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+
+        output, logits, _ = net(inputs)
+
+        running_loss += criterion(logits, labels).item()
+        running_accuracy += accuracy(output, labels).item()
+    statistics["train_loss"].append(running_loss / len(trainloader))
+    statistics["train_accuracy"].append(running_accuracy / len(trainloader))
+    net.eval()
+    statistics["equivariant_loss"].append(equiv_error_calc(net, test_images, kernel))
+    test_output, test_logits, _ = net(test_images)
+    statistics["test_loss"].append(criterion(test_logits, test_labels).item())
+    statistics["test_accuracy"].append(accuracy(test_output, test_labels).item())
+    statistics["baseline_cka"].append(baseline_cka_computation(net, test_images, kernel))
+
+def accuracy(output, labels):
+    return (torch.argmax(output, dim=-1) == labels).sum() / len(output)
 
 if __name__ == "__main__":
     args = ArgumentParser()
