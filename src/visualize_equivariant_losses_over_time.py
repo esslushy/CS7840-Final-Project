@@ -8,23 +8,23 @@ def main(statistics_pth: Path):
     with statistics_pth.open() as f:
         data = json.load(f)
 
-    equivariant_losses = data["equivariant_losses"]
+    equivariant_loss = data["equivariant_loss"]
     cka_baseline = data["baseline_cka"]
 
     fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
     ax.set_xlabel("Layer")
-    ax.set_xticks(range(len(equivariant_losses[0])))
+    ax.set_xticks(range(len(equivariant_loss[0])))
     ax.set_ylim(bottom=0, top=1)
     ax.set_ylabel("CKA (Higher is More Equivariant)")
 
-    n_epochs = len(equivariant_losses)
+    n_epochs = len(equivariant_loss)
     cmap = plt.get_cmap('gnuplot')
     colors = [cmap(i) for i in np.linspace(0, 1, n_epochs)]
 
     # Plot equivariant CKA for each epoch
     for i in range(n_epochs):
-        layers = range(len(equivariant_losses[i]))
-        ax.plot(layers, equivariant_losses[i], marker='o', c=colors[i], alpha=0.7)
+        layers = range(len(equivariant_loss[i]))
+        ax.plot(layers, equivariant_loss[i], marker='o', c=colors[i], alpha=0.7)
 
     # Plot baseline for each epoch with dashed lines, same color scheme
     for i in range(n_epochs):
@@ -46,7 +46,7 @@ def main(statistics_pth: Path):
     ax.legend(loc='lower right')
 
     Path(f"pdfs/{statistics_pth.stem}").mkdir(exist_ok=True, parents=True)
-    plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_losses.pdf")
+    plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_loss.pdf")
 
 if __name__ == "__main__":
     args = ArgumentParser()

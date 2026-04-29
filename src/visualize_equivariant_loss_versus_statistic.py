@@ -8,8 +8,8 @@ def main(statistics_pth: Path, statistic: str):
     with statistics_pth.open() as f:
         statistics = json.load(f)
 
-    num_layers = len(statistics["equivariant_losses"][0])
-    num_epochs = len(statistics["equivariant_losses"])
+    num_layers = len(statistics["equivariant_loss"][0])
+    num_epochs = len(statistics["equivariant_loss"])
 
     fig, axes = plt.subplots(1, num_layers, figsize=(5 * num_layers, 5), dpi=150, constrained_layout=True)
     if num_layers == 1:
@@ -26,7 +26,7 @@ def main(statistics_pth: Path, statistic: str):
             ax.set_ylabel("CKA (Higher is More Equivariant)")
 
         for jdx in range(num_epochs):
-            ax.plot(statistics[statistic][jdx], statistics["equivariant_losses"][jdx][idx],
+            ax.plot(statistics[statistic][jdx], statistics["equivariant_loss"][jdx][idx],
                     marker='o', c=colors[jdx])
             ax.plot(statistics[statistic][jdx], statistics["baseline_cka"][jdx][idx],
                     marker='x', c=colors[jdx], linestyle='none', alpha=0.5)
@@ -44,7 +44,7 @@ def main(statistics_pth: Path, statistic: str):
     cbar.ax.text(0.5, 1.0, str(num_epochs - 1), transform=cbar.ax.transAxes, va='bottom', ha='center')
 
     Path(f"pdfs/{statistics_pth.stem}").mkdir(exist_ok=True, parents=True)
-    plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_vs_test.pdf")
+    plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_vs_{statistic}.pdf")
 
 if __name__ == "__main__":
     args = ArgumentParser()
