@@ -43,10 +43,10 @@ def main(statistics_pth: Path):
     # Legend entries for line styles
     ax.plot([], [], 'k-', marker='o', label='Rotation CKA')
     ax.plot([], [], 'k--', marker='x', label='Unrelated Baseline')
-    ax.legend(loc='lower right')
+    ax.legend(loc='lower left', fontsize='x-large')
 
     Path(f"pdfs/{statistics_pth.stem}").mkdir(exist_ok=True, parents=True)
-    plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_loss.pdf")
+    plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_loss_{statistics_pth.stem}.pdf")
 
 if __name__ == "__main__":
     args = ArgumentParser()

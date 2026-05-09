@@ -44,7 +44,7 @@ def main(statistics_pth: Path, statistic: str):
     cbar.ax.text(0.5, 1.0, str(num_epochs - 1), transform=cbar.ax.transAxes, va='bottom', ha='center')
 
     Path(f"pdfs/{statistics_pth.stem}").mkdir(exist_ok=True, parents=True)
-    plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_vs_{statistic}.pdf")
+    plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_vs_{statistic}_{statistics_pth.stem}.pdf")
 
 if __name__ == "__main__":
     args = ArgumentParser()
