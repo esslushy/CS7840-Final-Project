@@ -95,9 +95,9 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, holdout: str, th
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"models/{dataset}_{model}.pth")
+    torch.save(net.state_dict(), f"models/classification_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_model.pth")
 
-    with open(f"results/{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
+    with open(f"results/classification_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
         json.dump(statistics, f)
 
 def load_cifar(rotation, holdout):
