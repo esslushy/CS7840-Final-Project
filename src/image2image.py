@@ -93,7 +93,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
 
     torch.save(net.state_dict(), f"models/cifar_{model}.pth")
 
-    with open(f"results/{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
+    with open(f"results/image2image_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
         json.dump(statistics, f)    
 
 
