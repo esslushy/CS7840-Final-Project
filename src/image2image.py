@@ -28,12 +28,14 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
 
         testset = torchvision.datasets.CIFAR10(root='./data', train=False,
                                             download=True, transform=transform_test)
+        in_channels = 3
     elif dataset == "mnist":
         trainset = torchvision.datasets.MNIST(root='./data', train=False,
                                             download=True, transform=transform_train)
         
         testset = torchvision.datasets.MNIST(root='./data', train=False,
                                             download=True, transform=transform_test)
+        in_channels = 1
     else:
         raise ValueError(f"No such dataset: {dataset}")
                             
@@ -50,7 +52,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
     elif model == "naive":
         raise NotImplementedError()
     elif model == "cnn":
-        net = CNN(in_channels=1 if dataset == "mnist" else 3, num_features=128 if thicker else 64)
+        net = CNN(in_channels=in_channels, num_features=128 if thicker else 64)
     else:
         raise ValueError(f"No such model {model}")
     net = net.to(device)
@@ -119,7 +121,7 @@ def update_statistics(kernel, test_images, test_labels, net, criterion, statisti
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("--model", help="Which model to use", type=str, choices=("cnn", "naive", "vit"), default="cnn")
-    args.add_argument("--dataset", help="The dataset to train on.", type=str, choices=("cifar", "mnist_font"), default="cifar")
+    args.add_argument("--dataset", help="The dataset to train on.", type=str, choices=("cifar", "mnist"), default="cifar")
     args.add_argument("--kernel", help="Which kernel to use for CKA", type=str, choices=["rbf", "linear"], default="linear")
     args.add_argument("--rotation", help="Whether to train with rotation applied", action="store_true")
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
