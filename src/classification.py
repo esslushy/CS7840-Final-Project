@@ -90,7 +90,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, holdout: str, th
 
             running_loss += loss.item()
             running_accuracy += accuracy(output, labels).item()
-        print(f'[{epoch + 1}] loss: {running_loss / len(trainloader):.3f} accuracy: {running_accuracy / len(trainloader):.3f}')
+        print(f"[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}")
         update_statistics(kernel, test_images, test_labels, net, criterion, statistics, trainloader, device)
 
     print('Finished Training')

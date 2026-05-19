@@ -20,10 +20,10 @@ def equiv_error_calc(net, images, kernel: Literal["linear", "rbf"] = "linear"):
     net_errors = []
 
     with torch.inference_mode():
-        _, _, layers = net(images)
-        _, _, layers_rot90 = net(images_rot90)
-        _, _, layers_rot180 = net(images_rot180)
-        _, _, layers_rot270 = net(images_rot270)
+        *_, layers = net(images)
+        *_, layers_rot90 = net(images_rot90)
+        *_, layers_rot180 = net(images_rot180)
+        *_, layers_rot270 = net(images_rot270)
 
     for rep, rep90, rep180, rep270 in zip(
         layers, layers_rot90, layers_rot180, layers_rot270
@@ -48,8 +48,8 @@ def baseline_cka_computation(net, images, kernel: Literal["linear", "rbf"] = "li
     images_x, images_y = split_array_randomly(images)
 
     with torch.inference_mode():
-        _, _, layers_x = net(images_x)
-        _, _, layers_y = net(images_y)
+        *_, layers_x = net(images_x)
+        *_, layers_y = net(images_y)
 
     for rep_x, rep_y in zip(layers_x, layers_y):
         cka_baselines.append(cka(rep_x, rep_y, False, kernel).item())

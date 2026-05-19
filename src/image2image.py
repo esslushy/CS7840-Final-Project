@@ -41,7 +41,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
                             
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
                                             shuffle=True, num_workers=2)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=len(testset), # Get all of the images.
+    testloader = torch.utils.data.DataLoader(testset, batch_size=len(testset) // 4, # Get all of the images.
                                             shuffle=False, num_workers=2)
     test_images, _ = next(iter(testloader))
     test_images = test_images.to(device)
@@ -52,7 +52,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
     elif model == "naive":
         raise NotImplementedError()
     elif model == "cnn":
-        net = CNN(in_channels=in_channels, num_features=128 if thicker else 64)
+        net = CNN(in_channels=in_channels, num_features=32 if thicker else 16)
     else:
         raise ValueError(f"No such model {model}")
     net = net.to(device)
@@ -74,7 +74,6 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
     for epoch in range(NUM_EPOCHS):
         net.train()
         running_loss = 0.0
-        running_accuracy = 0.0
         for data in trainloader:
             inputs, _ = data
             inputs = inputs.to(device)
@@ -88,7 +87,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
             optimizer.step()
 
             running_loss += loss.item()
-        print(f'[{epoch + 1}] loss: {running_loss / len(trainloader):.3f} accuracy: {running_accuracy / len(trainloader):.3f}')
+        print(f"[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}")
         update_statistics(kernel, test_images, test_labels, net, criterion, statistics, trainloader, device)
 
     print('Finished Training')
