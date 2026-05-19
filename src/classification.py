@@ -8,14 +8,16 @@ import json
 from argparse import ArgumentParser
 from pathlib import Path
 import sys
-from print_digit import load_mnist_font
+from print_digit import load_mnist_font_dataset
 
 if "mnist_font" in sys.argv:
     CLASSES = tuple(range(10))
 else:
     CLASSES = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-
-NUM_EPOCHS = 200
+if "mnist_font" in sys.argv:
+    NUM_EPOCHS = 400
+else:
+    NUM_EPOCHS = 200
 BATCH_SIZE = 64
 
 def main(model: str, dataset: str, kernel: str, rotation: bool, holdout: str, thicker: bool, finetune: Path):
@@ -26,7 +28,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, holdout: str, th
         trainset, testset = load_cifar(rotation, holdout)
     elif dataset == "mnist_font":
         from MNISTNets import CNN, ViT, NaiveNet
-        trainset, testset = load_mnist_font()
+        trainset, testset = load_mnist_font(rotation, holdout)
     else:
         raise Exception("Unknown Dataset")
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
@@ -93,29 +95,34 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, holdout: str, th
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"models/cifar_{model}.pth")
+    torch.save(net.state_dict(), f"models/{dataset}_{model}.pth")
 
     with open(f"results/{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
         json.dump(statistics, f)
 
 def load_cifar(rotation, holdout):
-    transform_operations = [transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    transform_operations = [transforms.ToTensor()]
     if rotation and not holdout:
         transform_operations.append(transforms.RandomRotation(degrees=(0, 360)))
+    
     transform_train = transforms.Compose(transform_operations)
-
     trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
                                             download=True, transform=transform_train)
-    transform_test = transforms.Compose([
-        transforms.ToTensor(), 
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
-
+    
+    transform_test = transforms.ToTensor()
     testset = torchvision.datasets.CIFAR10(root='./data', train=False,
                                         download=True, transform=transform_test)
-
-                                            
+                       
     return trainset, testset
+
+def load_mnist_font(rotation, holdout):
+    transform_operations = [transforms.ToTensor()]
+    if rotation and not holdout:
+        transform_operations.append(transforms.RandomRotation(degrees=(0, 360)))
+    return load_mnist_font_dataset(
+        transforms.Compose(transform_operations),
+        transforms.ToTensor()
+    )
 
 def update_statistics(kernel, test_images, test_labels, net, criterion, statistics, trainloader, device):
     net.train()

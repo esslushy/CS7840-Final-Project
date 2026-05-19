@@ -5,9 +5,8 @@ from torch.utils.data import Dataset, SubsetRandomSampler
 from PIL import Image
 import torch
 from tqdm import tqdm
-from torchvision.transforms import ToTensor
 
-def load_mnist_font():
+def load_mnist_font_dataset(train_transforms, test_transforms):
     X = []
     Y = []
     for i in range(10):
@@ -23,9 +22,8 @@ def load_mnist_font():
     X = X[perm]
     Y = Y[perm]
 
-    totensor = ToTensor()
-    mnist_train = PrintedDigitDataset(X, Y, mode='train', transform=totensor)
-    mnist_test = PrintedDigitDataset(X, Y, mode='test', transform=totensor)
+    mnist_train = PrintedDigitDataset(X, Y, mode='train', transform=train_transforms)
+    mnist_test = PrintedDigitDataset(X, Y, mode='test', transform=test_transforms)
     return mnist_train, mnist_test
 
 class PrintedDigitDataset(Dataset):
