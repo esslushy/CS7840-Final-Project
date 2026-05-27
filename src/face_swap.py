@@ -18,12 +18,7 @@ from utils import split_array_randomly, Random90Rotation
 from HSIC import cka
 
 NUM_EPOCHS = 200
-BATCH_SIZE = 64
-
-
-# ---------------------------------------------------------------------------
-# CelebA dataset helpers (Kaggle CSV format)
-# ---------------------------------------------------------------------------
+BATCH_SIZE = 8
 
 def download_celeba(root="./data"):
     """Download CelebA from Kaggle if it doesn't already exist."""
@@ -60,7 +55,6 @@ def download_celeba(root="./data"):
         print("     https://www.kaggle.com/datasets/jessicali9530/celeba-dataset")
         raise SystemExit(1)
 
-
 def find_image_dir(celeba_dir):
     """
     Find the image directory — Kaggle nests it as
@@ -75,7 +69,6 @@ def find_image_dir(celeba_dir):
             if jpgs:
                 return candidate
     return None
-
 
 class CelebASmiles(Dataset):
     """CelebA images filtered by Smiling attribute, Kaggle CSV format."""
@@ -121,7 +114,6 @@ class CelebASmiles(Dataset):
             img = self.transform(img)
         return img
 
-
 class PairedDomainLoader:
     """Yields (smile_batch, neutral_batch) pairs, cycling the shorter domain."""
 
@@ -147,11 +139,6 @@ class PairedDomainLoader:
 
     def __len__(self):
         return max(len(self.loader_a), len(self.loader_b))
-
-
-# ---------------------------------------------------------------------------
-# Training
-# ---------------------------------------------------------------------------
 
 def main(kernel: str, rotation: bool, finetune: Path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -275,7 +262,6 @@ def main(kernel: str, rotation: bool, finetune: Path):
     with open(f"results/{tag}_statistics.json", "wt+") as f:
         json.dump(statistics, f)
 
-
 def update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device):
     net.eval()
 
@@ -322,7 +308,6 @@ def update_statistics(kernel, net, criterion, statistics, trainloader, testloade
     statistics["test_loss"].append(running_test_loss / len(testloader))
     statistics["equivariant_loss"].append({k: v / len(testloader) for k, v in running_equivariant_error.items()})
     statistics["baseline_cka"].append({k: v / len(testloader) for k, v in running_cka_baseline.items()})
-
 
 if __name__ == "__main__":
     args = ArgumentParser()
