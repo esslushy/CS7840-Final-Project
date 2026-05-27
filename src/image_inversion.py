@@ -3,11 +3,14 @@ import torchvision
 import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.optim as optim
-from utils import equiv_error_calc, baseline_cka_computation
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from InvertNets import CNN
+from Models.InvertNets import CNN
+from utils import split_array_randomly, Random90Rotation
+from collections import defaultdict
+from HSIC import cka
+import numpy as np
 
 NUM_EPOCHS = 200
 BATCH_SIZE = 64
@@ -17,7 +20,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
 
     transform_operations = [transforms.ToTensor()]
     if rotation:
-        transform_operations.append(transforms.RandomRotation(degrees=(0, 360)))
+        transform_operations.append(Random90Rotation())
     transform_train = transforms.Compose(transform_operations)
 
     transform_test = transforms.ToTensor()
@@ -41,11 +44,8 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
                             
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
                                             shuffle=True, num_workers=2)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=len(testset) // 4, # Get all of the images.
+    testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE, # Get all of the images.
                                             shuffle=False, num_workers=2)
-    test_images, _ = next(iter(testloader))
-    test_images = test_images.to(device)
-    test_labels = 1.0 - test_images
     
     if model == "vit":
         raise NotImplementedError()
@@ -69,7 +69,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
         "baseline_cka": []
     }
 
-    update_statistics(kernel, test_images, test_labels, net, criterion, statistics, trainloader, device)
+    update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device)
 
     for epoch in range(NUM_EPOCHS):
         net.train()
@@ -88,33 +88,59 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
 
             running_loss += loss.item()
         print(f"[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}")
-        update_statistics(kernel, test_images, test_labels, net, criterion, statistics, trainloader, device)
+        update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device)
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"models/classification_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}_model.pth")
+    torch.save(net.state_dict(), f"models/image_inversion_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}_model.pth")
 
-    with open(f"results/image2image_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
+    with open(f"results/image_inversion_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
         json.dump(statistics, f)    
 
 
-def update_statistics(kernel, test_images, test_labels, net, criterion, statistics, trainloader, device):
-    net.train()
-    running_loss = 0.0
+def update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device):
+    running_train_loss = 0.0
     for data in trainloader:
         inputs, labels = data
         inputs = inputs.to(device)
-        labels = 1.0 - inputs
+        labels = labels.to(device)
 
-        output, _ = net(inputs)
+        output, logits, _ = net(inputs)
 
-        running_loss += criterion(output, labels).item()
-    statistics["train_loss"].append(running_loss / len(trainloader))
-    net.eval()
-    statistics["equivariant_loss"].append(equiv_error_calc(net, test_images, kernel))
-    test_output, _ = net(test_images)
-    statistics["test_loss"].append(criterion(test_output, test_labels).item())
-    statistics["baseline_cka"].append(baseline_cka_computation(net, test_images, kernel))
+        running_train_loss += criterion(logits, labels).item()
+    statistics["train_loss"].append(running_train_loss / len(trainloader))
+    running_test_loss = 0.0
+    running_equivariant_error = defaultdict(float)
+    running_cka_baseline = defaultdict(float)
+    with torch.inference_mode():
+        for data in testloader:
+            inputs, labels = data
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
+            output, logits, layers = net(inputs)
+
+            running_test_loss += criterion(logits, labels).item()
+
+            inputs_rot90 = torch.rot90(inputs, 1, dims=(-2, -1))
+            inputs_rot180 = torch.rot90(inputs, 2, dims=(-2, -1))
+            inputs_rot270 = torch.rot90(inputs, 3, dims=(-2, -1))
+
+            *_, layers_rot90 = net(inputs_rot90)
+            *_, layers_rot180 = net(inputs_rot180)
+            *_, layers_rot270 = net(inputs_rot270)
+
+            for key in layers.keys():
+                running_equivariant_error[key] += np.mean([
+                    cka(layers[key], layers_rot90[key], kernel=kernel).item(),
+                    cka(layers[key], layers_rot180[key], kernel=kernel).item(),
+                    cka(layers[key], layers_rot270[key], kernel=kernel).item()
+                ])
+                layers_x, layers_y = split_array_randomly(layers[key])
+                running_cka_baseline[key] += cka(layers_x, layers_y, kernel=kernel).item()
+    statistics["test_loss"].append(running_test_loss / len(testloader))
+    statistics["equivariant_loss"].append({k: v / len(testloader) for k,v in running_equivariant_error.items()})
+    statistics["baseline_cka"].append({k: v / len(testloader) for k,v in running_cka_baseline.items()})
 
 
 if __name__ == "__main__":
