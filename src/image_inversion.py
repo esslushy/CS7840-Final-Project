@@ -11,6 +11,7 @@ from utils import split_array_randomly, Random90Rotation
 from collections import defaultdict
 from HSIC import cka
 import numpy as np
+import os
 
 NUM_EPOCHS = 200
 BATCH_SIZE = 64
@@ -69,6 +70,9 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
         "baseline_cka": []
     }
 
+    os.mkdir("models", exist_ok=True)
+    os.mkdir("results", exist_ok=True)
+
     update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device)
 
     for epoch in range(NUM_EPOCHS):
@@ -92,9 +96,10 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"models/image_inversion_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}_model.pth")
 
-    with open(f"results/image_inversion_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
+    tag = f"image_inversion_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}"
+    torch.save(net.state_dict(), f"models/{tag}_model.pth")
+    with open(f"results/{tag}_statistics.json", "wt+") as f:
         json.dump(statistics, f)    
 
 
@@ -103,11 +108,11 @@ def update_statistics(kernel, net, criterion, statistics, trainloader, testloade
     for data in trainloader:
         inputs, labels = data
         inputs = inputs.to(device)
-        labels = labels.to(device)
+        labels = 1.0 - inputs
 
-        output, logits, _ = net(inputs)
+        output, _ = net(inputs)
 
-        running_train_loss += criterion(logits, labels).item()
+        running_train_loss += criterion(output, labels).item()
     statistics["train_loss"].append(running_train_loss / len(trainloader))
     running_test_loss = 0.0
     running_equivariant_error = defaultdict(float)
@@ -116,11 +121,11 @@ def update_statistics(kernel, net, criterion, statistics, trainloader, testloade
         for data in testloader:
             inputs, labels = data
             inputs = inputs.to(device)
-            labels = labels.to(device)
+            labels = 1.0 - inputs
 
-            output, logits, layers = net(inputs)
+            output, layers = net(inputs)
 
-            running_test_loss += criterion(logits, labels).item()
+            running_test_loss += criterion(output, labels).item()
 
             inputs_rot90 = torch.rot90(inputs, 1, dims=(-2, -1))
             inputs_rot180 = torch.rot90(inputs, 2, dims=(-2, -1))

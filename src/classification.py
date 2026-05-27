@@ -12,6 +12,7 @@ from HSIC import cka
 from utils import split_array_randomly, Random90Rotation
 from print_digit import load_mnist_font_dataset
 from collections import defaultdict
+import os
 
 if "mnist_font" in sys.argv:
     CLASSES = tuple(range(10))
@@ -63,6 +64,9 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, holdout: str, th
         "baseline_cka": []
     }
 
+    os.mkdir("models", exist_ok=True)
+    os.mkdir("results", exist_ok=True)
+
     update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device)
 
     if holdout:
@@ -96,9 +100,9 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, holdout: str, th
 
     print('Finished Training')
 
-    torch.save(net.state_dict(), f"models/classification_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_model.pth")
-
-    with open(f"results/classification_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}_statistics.json", "wt+") as f:
+    tag = f"classification_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}"
+    torch.save(net.state_dict(), f"models/{tag}_model.pth")
+    with open(f"results/{tag}_statistics.json", "wt+") as f:
         json.dump(statistics, f)
 
 def load_cifar(rotation, holdout):
