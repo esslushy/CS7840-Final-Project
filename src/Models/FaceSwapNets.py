@@ -30,7 +30,7 @@ class ResBlock(nn.Module):
         return x, acts
 
 
-class SmileToFrownGenerator(nn.Module):
+class SmileToNeutralGenerator(nn.Module):
     def __init__(self, n_res_blocks=9):
         super().__init__()
         # Encoder
