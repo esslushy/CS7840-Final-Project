@@ -19,9 +19,9 @@ def _gn_groups(channels, max_groups=8):
 # ---------------------------------------------------------------------------
 
 class NaiveNet(nn.Module):
-    def __init__(self):
+    def __init__(self, channels=2):
         super().__init__()
-        self.conv1 = nn.Conv2d(2, 2, 1)
+        self.conv1 = nn.Conv2d(channels, channels, 1)
 
     def forward(self, x):
         acts = OrderedDict()
@@ -35,9 +35,9 @@ class NaiveNet(nn.Module):
 # ---------------------------------------------------------------------------
 
 class CNN(nn.Module):
-    def __init__(self, width1=120, width2=84):
+    def __init__(self, width1=120, width2=84, channels=2):
         super().__init__()
-        self.conv1 = nn.Conv2d(2, width1, 3, padding=1)
+        self.conv1 = nn.Conv2d(channels, width1, 3, padding=1)
         self.norm1 = nn.GroupNorm(_gn_groups(width1), width1)
         self.conv2 = nn.Conv2d(width1, width2, 3, padding=1)
         self.norm2 = nn.GroupNorm(_gn_groups(width2), width2)
@@ -47,7 +47,7 @@ class CNN(nn.Module):
         self.norm4 = nn.GroupNorm(_gn_groups(width1), width1)
         self.conv5 = nn.Conv2d(width1, width1 // 2, 3, padding=1)
         self.norm5 = nn.GroupNorm(_gn_groups(width1 // 2), width1 // 2)
-        self.out_conv = nn.Conv2d(width1 // 2, 2, 1)
+        self.out_conv = nn.Conv2d(width1 // 2, channels, 1)
 
     def forward(self, x):
         acts = OrderedDict()
@@ -90,10 +90,10 @@ class CNN(nn.Module):
 # ---------------------------------------------------------------------------
 
 class UNet(nn.Module):
-    def __init__(self, width1=120, width2=84):
+    def __init__(self, width1=120, width2=84, channels=2):
         super().__init__()
         # Encoder
-        self.enc1_conv1 = nn.Conv2d(2, width1, 3, padding=1)
+        self.enc1_conv1 = nn.Conv2d(channels, width1, 3, padding=1)
         self.enc1_norm1 = nn.GroupNorm(_gn_groups(width1), width1)
         self.enc1_conv2 = nn.Conv2d(width1, width1, 3, padding=1)
         self.enc1_norm2 = nn.GroupNorm(_gn_groups(width1), width1)
@@ -124,7 +124,7 @@ class UNet(nn.Module):
         self.dec1_conv2 = nn.Conv2d(width1, width1, 3, padding=1)
         self.dec1_norm2 = nn.GroupNorm(_gn_groups(width1), width1)
 
-        self.out_conv = nn.Conv2d(width1, 2, 1)
+        self.out_conv = nn.Conv2d(width1, channels, 1)
 
     def forward(self, x):
         acts = OrderedDict()
@@ -317,6 +317,7 @@ class ViT(nn.Module):
         patch_height, patch_width = pair(patch_size)
         assert image_height % patch_height == 0 and image_width % patch_width == 0
         patch_dim = channels * patch_height * patch_width
+        self.channels = channels
         self.grid_h = image_height // patch_height
         self.grid_w = image_width // patch_width
         self.patch_height = patch_height
@@ -352,8 +353,8 @@ class ViT(nn.Module):
         acts["unpatch"] = x.detach()
 
         # Reshape patches back to image
-        x = x.view(-1, self.grid_h, self.grid_w, 2, self.patch_height, self.patch_width)
+        x = x.view(-1, self.grid_h, self.grid_w, self.channels, self.patch_height, self.patch_width)
         x = x.permute(0, 3, 1, 4, 2, 5).contiguous()
-        out = x.view(-1, 2, self.image_height, self.image_width)
+        out = x.view(-1, self.channels, self.image_height, self.image_width)
 
         return out, acts

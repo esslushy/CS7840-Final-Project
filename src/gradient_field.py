@@ -10,7 +10,7 @@ from pathlib import Path
 from HSIC import cka
 from utils import split_array_randomly, Random90Rotation
 from collections import defaultdict
-import os
+from Models.GradientFieldNets import UNet, CNN, ViT, NaiveNet
 
 NUM_EPOCHS = 20
 BATCH_SIZE = 64
@@ -48,41 +48,15 @@ def sobel_gradient(images):
     grad_y = nn.functional.conv2d(images, sobel_y, padding=1, groups=C).mean(dim=1, keepdim=True)
     return torch.cat([grad_x, grad_y], dim=1)
 
-
-def rotate_vector_field(field, k):
-    """
-    Rotate a 2D vector field by k * 90 degrees.
-
-    When we rotate the *image* by k*90°, the gradient vectors themselves
-    must also rotate by the same angle — not just the spatial layout.
-
-    Args:
-        field: (B, 2, H, W)  vector field (dx, dy)
-        k:     number of 90° counter-clockwise rotations (1, 2, or 3)
-
-    Returns:
-        rotated field: (B, 2, H, W)
-    """
-    rotated = torch.rot90(field, k, dims=(-2, -1))
-
-    dx, dy = rotated[:, 0:1], rotated[:, 1:2]
-    cos_vals = [1, 0, -1, 0]
-    sin_vals = [0, 1, 0, -1]
-    c, s = cos_vals[k % 4], sin_vals[k % 4]
-    new_dx = c * dx - s * dy
-    new_dy = s * dx + c * dy
-    return torch.cat([new_dx, new_dy], dim=1)
-
-
 def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, finetune: Path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if dataset == "cifar":
-        from Models.GradientField.CIFARNets import UNet, CNN, ViT, NaiveNet
         trainset, testset = load_cifar(rotation)
+        in_channels = 3
     elif dataset == "mnist":
-        from Models.GradientField.MNISTNets import UNet, CNN, ViT, NaiveNet
         trainset, testset = load_mnist(rotation)
+        in_channels = 1
     else:
         raise Exception("Unknown Dataset")
 
@@ -94,11 +68,11 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
     if model == "vit":
         net = ViT(image_size=32 if dataset == "cifar" else 28, patch_size=4, dim=256 if thicker else 128, depth=1, heads=1, mlp_dim=256 if thicker else 128)
     elif model == "naive":
-        net = NaiveNet()
+        net = NaiveNet(in_channels=in_channels)
     elif model == "cnn":
-        net = CNN(width1=256 if thicker else 128, width2=256 if thicker else 128)
+        net = CNN(in_channels=in_channels, width1=256 if thicker else 128, width2=256 if thicker else 128)
     elif model == "unet":
-        net = UNet(width1=256 if thicker else 128, width2=256 if thicker else 128)
+        net = UNet(in_channels=in_channels, width1=256 if thicker else 128, width2=256 if thicker else 128)
     else:
         raise ValueError(f"No such model {model}")
     net = net.to(device)
