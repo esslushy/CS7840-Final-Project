@@ -18,7 +18,7 @@ from utils import split_array_randomly, Random90Rotation
 from HSIC import cka
 
 NUM_EPOCHS = 200
-BATCH_SIZE = 8
+BATCH_SIZE = 16
 
 def download_celeba(root="./data"):
     """Download CelebA from Kaggle if it doesn't already exist."""
