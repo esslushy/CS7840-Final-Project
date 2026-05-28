@@ -70,8 +70,8 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
         "baseline_cka": []
     }
 
-    os.mkdir("models", exist_ok=True)
-    os.mkdir("results", exist_ok=True)
+    Path("models").mkdir(exist_ok=True)
+    Path("results").mkdir(exist_ok=True)
 
     update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device)
 

@@ -209,8 +209,8 @@ def main(kernel: str, rotation: bool, finetune: Path):
         "baseline_cka": [],
     }
 
-    os.makedirs("models", exist_ok=True)
-    os.makedirs("results", exist_ok=True)
+    Path("models").mkdir(exist_ok=True)
+    Path("results").mkdir(exist_ok=True)
 
     update_statistics(kernel, G, criterion_cycle, statistics, trainloader, testloader, device)
 

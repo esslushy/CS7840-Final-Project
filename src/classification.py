@@ -12,7 +12,6 @@ from HSIC import cka
 from utils import split_array_randomly, Random90Rotation
 from print_digit import load_mnist_font_dataset
 from collections import defaultdict
-import os
 
 if "mnist_font" in sys.argv:
     CLASSES = tuple(range(10))
@@ -64,8 +63,8 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, holdout: str, th
         "baseline_cka": []
     }
 
-    os.mkdir("models", exist_ok=True)
-    os.mkdir("results", exist_ok=True)
+    Path("models").mkdir(exist_ok=True)
+    Path("results").mkdir(exist_ok=True)
 
     update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device)
 
