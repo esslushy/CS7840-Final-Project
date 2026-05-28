@@ -8,7 +8,8 @@ def main(statistics_pth: Path, statistic: str):
     with statistics_pth.open() as f:
         statistics = json.load(f)
 
-    num_layers = len(statistics["equivariant_loss"][0])
+    layer_names = list(statistics["equivariant_loss"][0].keys())
+    num_layers = len(layer_names)
     num_epochs = len(statistics["equivariant_loss"])
 
     fig, axes = plt.subplots(1, num_layers, figsize=(5 * num_layers, 5), dpi=150, constrained_layout=True)
@@ -18,17 +19,19 @@ def main(statistics_pth: Path, statistic: str):
     cmap = plt.get_cmap('gnuplot')
     colors = [cmap(i) for i in np.linspace(0, 1, num_epochs)]
 
-    for idx, ax in enumerate(axes):
-        ax.set_title(f"Layer {idx}")
+    for idx, (layer_name, ax) in enumerate(zip(layer_names, axes)):
+        ax.set_title(layer_name)
         ax.set_xlabel(statistic.replace("_", " ").title())
         ax.set_ylim(bottom=0, top=1)
         if idx == 0:
             ax.set_ylabel("CKA (Higher is More Equivariant)")
 
         for jdx in range(num_epochs):
-            ax.plot(statistics[statistic][jdx], statistics["equivariant_loss"][jdx][idx],
+            eq_values = list(statistics["equivariant_loss"][jdx].values())
+            bl_values = list(statistics["baseline_cka"][jdx].values())
+            ax.plot(statistics[statistic][jdx], eq_values[idx],
                     marker='o', c=colors[jdx])
-            ax.plot(statistics[statistic][jdx], statistics["baseline_cka"][jdx][idx],
+            ax.plot(statistics[statistic][jdx], bl_values[idx],
                     marker='x', c=colors[jdx], linestyle='none', alpha=0.5)
 
     # Legend entries for marker styles

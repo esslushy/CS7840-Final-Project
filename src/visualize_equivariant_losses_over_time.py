@@ -12,8 +12,12 @@ def main(statistics_pth: Path):
     cka_baseline = data["baseline_cka"]
 
     fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
+
+    # Use keys from the first epoch's dict as layer names
+    layer_names = list(equivariant_loss[0].keys())
     ax.set_xlabel("Layer")
-    ax.set_xticks(range(len(equivariant_loss[0])))
+    ax.set_xticks(range(len(layer_names)))
+    ax.set_xticklabels(layer_names, rotation=45, ha='right')
     ax.set_ylim(bottom=0, top=1)
     ax.set_ylabel("CKA (Higher is More Equivariant)")
 
@@ -23,13 +27,15 @@ def main(statistics_pth: Path):
 
     # Plot equivariant CKA for each epoch
     for i in range(n_epochs):
-        layers = range(len(equivariant_loss[i]))
-        ax.plot(layers, equivariant_loss[i], marker='o', c=colors[i], alpha=0.7)
+        values = list(equivariant_loss[i].values())
+        layers = range(len(values))
+        ax.plot(layers, values, marker='o', c=colors[i], alpha=0.7)
 
     # Plot baseline for each epoch with dashed lines, same color scheme
     for i in range(n_epochs):
-        layers = range(len(cka_baseline[i]))
-        ax.plot(layers, cka_baseline[i], marker='x', c=colors[i],
+        values = list(cka_baseline[i].values())
+        layers = range(len(values))
+        ax.plot(layers, values, marker='x', c=colors[i],
                 linestyle='--', alpha=0.5, linewidth=1)
 
     # Colorbar for epochs
@@ -44,6 +50,8 @@ def main(statistics_pth: Path):
     ax.plot([], [], 'k-', marker='o', label='Rotation CKA')
     ax.plot([], [], 'k--', marker='x', label='Unrelated Baseline')
     ax.legend(loc='lower left', fontsize='x-large')
+
+    fig.tight_layout()
 
     Path(f"pdfs/{statistics_pth.stem}").mkdir(exist_ok=True, parents=True)
     plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_loss_{statistics_pth.stem}.pdf")
