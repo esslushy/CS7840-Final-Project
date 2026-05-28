@@ -37,7 +37,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, holdout: str, th
         raise Exception("Unknown Dataset")
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
                                             shuffle=True, num_workers=2)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=len(testset), # Get all of the images.
+    testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE,
                                             shuffle=False, num_workers=2)
     
     if model == "vit":

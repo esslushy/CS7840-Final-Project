@@ -13,7 +13,7 @@ from collections import defaultdict
 import os
 
 NUM_EPOCHS = 200
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 
 def sobel_gradient(images):
     """
@@ -88,7 +88,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
 
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
                                               shuffle=True, num_workers=2)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=len(testset),
+    testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE,
                                              shuffle=False, num_workers=2)
 
     if model == "vit":
