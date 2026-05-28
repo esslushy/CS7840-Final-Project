@@ -108,7 +108,7 @@ def cka(X: torch.Tensor, Y: torch.Tensor, unbiased: bool = True, kernel: Literal
     denom = torch.sqrt(hsic_xx * hsic_yy)
     if denom < 1e-10:
         return torch.tensor(0.0, dtype=torch.float32, device=X.device)
-    return hsic_xy / denom
+    return torch.clamp(hsic_xy / denom, 0.0, 1.0)
 
 # ------------------------------------------------------------
 # Equivariance Tracking
