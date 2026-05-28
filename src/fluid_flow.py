@@ -62,8 +62,8 @@ def rotate_grid(grid_size, theta, device):
 
     R = make_rotation_matrix(theta)  # (2, 2)
     # Rotate coordinates: new_xy = R^{-1} @ xy (inverse rotation to find source)
-    R_inv = R.T  # orthogonal, so inverse = transpose
-    xy_rot = (xy.view(-1, 2) @ R_inv.T).view(grid_size, grid_size, 2)
+    R_inv = R.mT  # orthogonal, so inverse = transpose
+    xy_rot = (xy.view(-1, 2) @ R_inv.mT).view(grid_size, grid_size, 2)
 
     return xy_rot.unsqueeze(0)  # (1, H, W, 2)
 
