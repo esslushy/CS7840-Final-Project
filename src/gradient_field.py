@@ -12,7 +12,7 @@ from utils import split_array_randomly, Random90Rotation
 from collections import defaultdict
 import os
 
-NUM_EPOCHS = 200
+NUM_EPOCHS = 20
 BATCH_SIZE = 64
 
 def sobel_gradient(images):

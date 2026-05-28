@@ -15,13 +15,13 @@ def _gn_groups(channels, max_groups=8):
 
 
 # ---------------------------------------------------------------------------
-# NaiveNet  (linear — no nonlinearities)
+# NaiveNet  (single linear layer)
 # ---------------------------------------------------------------------------
 
 class NaiveNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(1, 2, 1)
+        self.conv1 = nn.Conv2d(2, 2, 1)
 
     def forward(self, x):
         acts = OrderedDict()
@@ -37,7 +37,7 @@ class NaiveNet(nn.Module):
 class CNN(nn.Module):
     def __init__(self, width1=120, width2=84):
         super().__init__()
-        self.conv1 = nn.Conv2d(1, width1, 3, padding=1)
+        self.conv1 = nn.Conv2d(2, width1, 3, padding=1)
         self.norm1 = nn.GroupNorm(_gn_groups(width1), width1)
         self.conv2 = nn.Conv2d(width1, width2, 3, padding=1)
         self.norm2 = nn.GroupNorm(_gn_groups(width2), width2)
@@ -83,7 +83,7 @@ class UNet(nn.Module):
     def __init__(self, width1=120, width2=84):
         super().__init__()
         # Encoder
-        self.enc1_conv1 = nn.Conv2d(1, width1, 3, padding=1)
+        self.enc1_conv1 = nn.Conv2d(2, width1, 3, padding=1)
         self.enc1_norm1 = nn.GroupNorm(_gn_groups(width1), width1)
         self.enc1_conv2 = nn.Conv2d(width1, width1, 3, padding=1)
         self.enc1_norm2 = nn.GroupNorm(_gn_groups(width1), width1)
@@ -276,7 +276,7 @@ class Transformer(nn.Module):
 # ---------------------------------------------------------------------------
 
 class ViT(nn.Module):
-    def __init__(self, *, image_size, patch_size, dim, depth, heads, mlp_dim, channels=1, dim_head=64):
+    def __init__(self, *, image_size, patch_size, dim, depth, heads, mlp_dim, channels=2, dim_head=64):
         super().__init__()
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
@@ -303,7 +303,7 @@ class ViT(nn.Module):
         )
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim)
-        self.unpatch = nn.Linear(dim, 2 * patch_height * patch_width)
+        self.unpatch = nn.Linear(dim, channels * patch_height * patch_width)
 
     def forward(self, img):
         acts = OrderedDict()

@@ -6,6 +6,14 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 
 
+def _gn_groups(channels, max_groups=8):
+    """Pick the largest group count up to max_groups that divides channels."""
+    for g in range(max_groups, 0, -1):
+        if channels % g == 0:
+            return g
+    return 1
+
+
 # ---------------------------------------------------------------------------
 # NaiveNet  (linear — no nonlinearities)
 # ---------------------------------------------------------------------------
@@ -13,23 +21,12 @@ from einops.layers.torch import Rearrange
 class NaiveNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(3, 64, 3, padding=1)
-        self.conv2 = nn.Conv2d(64, 128, 3, padding=1)
-        self.conv3 = nn.Conv2d(128, 128, 3, padding=1)
-        self.conv4 = nn.Conv2d(128, 64, 3, padding=1)
-        self.conv5 = nn.Conv2d(64, 2, 1)
+        self.conv1 = nn.Conv2d(3, 2, 1)
 
     def forward(self, x):
         acts = OrderedDict()
-        x = self.conv1(x)
-        acts["conv1"] = x.detach()
-        x = self.conv2(x)
-        acts["conv2"] = x.detach()
-        x = self.conv3(x)
-        acts["conv3"] = x.detach()
-        x = self.conv4(x)
-        acts["conv4"] = x.detach()
-        out = self.conv5(x)
+        out = self.conv1(x)
+        acts["conv1"] = out.detach()
         return out, acts
 
 
@@ -41,15 +38,15 @@ class CNN(nn.Module):
     def __init__(self, width1=120, width2=84):
         super().__init__()
         self.conv1 = nn.Conv2d(3, width1, 3, padding=1)
-        self.norm1 = nn.GroupNorm(8, width1)
+        self.norm1 = nn.GroupNorm(_gn_groups(width1), width1)
         self.conv2 = nn.Conv2d(width1, width2, 3, padding=1)
-        self.norm2 = nn.GroupNorm(8, width2)
+        self.norm2 = nn.GroupNorm(_gn_groups(width2), width2)
         self.conv3 = nn.Conv2d(width2, width2, 3, padding=1)
-        self.norm3 = nn.GroupNorm(8, width2)
+        self.norm3 = nn.GroupNorm(_gn_groups(width2), width2)
         self.conv4 = nn.Conv2d(width2, width1, 3, padding=1)
-        self.norm4 = nn.GroupNorm(8, width1)
+        self.norm4 = nn.GroupNorm(_gn_groups(width1), width1)
         self.conv5 = nn.Conv2d(width1, width1 // 2, 3, padding=1)
-        self.norm5 = nn.GroupNorm(8, width1 // 2)
+        self.norm5 = nn.GroupNorm(_gn_groups(width1 // 2), width1 // 2)
         self.out_conv = nn.Conv2d(width1 // 2, 2, 1)
 
     def forward(self, x):
@@ -57,23 +54,23 @@ class CNN(nn.Module):
         x = self.conv1(x)
         acts["conv1"] = x.detach()
         x = F.silu(self.norm1(x))
-        acts["act1"] = x.detach()
+        acts["silu1"] = x.detach()
         x = self.conv2(x)
         acts["conv2"] = x.detach()
         x = F.silu(self.norm2(x))
-        acts["act2"] = x.detach()
+        acts["silu2"] = x.detach()
         x = self.conv3(x)
         acts["conv3"] = x.detach()
         x = F.silu(self.norm3(x))
-        acts["act3"] = x.detach()
+        acts["silu3"] = x.detach()
         x = self.conv4(x)
         acts["conv4"] = x.detach()
         x = F.silu(self.norm4(x))
-        acts["act4"] = x.detach()
+        acts["silu4"] = x.detach()
         x = self.conv5(x)
         acts["conv5"] = x.detach()
         x = F.silu(self.norm5(x))
-        acts["act5"] = x.detach()
+        acts["silu5"] = x.detach()
         out = self.out_conv(x)
         return out, acts
 
@@ -87,35 +84,35 @@ class UNet(nn.Module):
         super().__init__()
         # Encoder
         self.enc1_conv1 = nn.Conv2d(3, width1, 3, padding=1)
-        self.enc1_norm1 = nn.GroupNorm(8, width1)
+        self.enc1_norm1 = nn.GroupNorm(_gn_groups(width1), width1)
         self.enc1_conv2 = nn.Conv2d(width1, width1, 3, padding=1)
-        self.enc1_norm2 = nn.GroupNorm(8, width1)
+        self.enc1_norm2 = nn.GroupNorm(_gn_groups(width1), width1)
         self.pool1 = nn.MaxPool2d(2)
 
         self.enc2_conv1 = nn.Conv2d(width1, width2, 3, padding=1)
-        self.enc2_norm1 = nn.GroupNorm(8, width2)
+        self.enc2_norm1 = nn.GroupNorm(_gn_groups(width2), width2)
         self.enc2_conv2 = nn.Conv2d(width2, width2, 3, padding=1)
-        self.enc2_norm2 = nn.GroupNorm(8, width2)
+        self.enc2_norm2 = nn.GroupNorm(_gn_groups(width2), width2)
         self.pool2 = nn.MaxPool2d(2)
 
         # Bottleneck
         self.mid_conv1 = nn.Conv2d(width2, width2 * 2, 3, padding=1)
-        self.mid_norm1 = nn.GroupNorm(8, width2 * 2)
+        self.mid_norm1 = nn.GroupNorm(_gn_groups(width2 * 2), width2 * 2)
         self.mid_conv2 = nn.Conv2d(width2 * 2, width2 * 2, 3, padding=1)
-        self.mid_norm2 = nn.GroupNorm(8, width2 * 2)
+        self.mid_norm2 = nn.GroupNorm(_gn_groups(width2 * 2), width2 * 2)
 
         # Decoder
         self.up2 = nn.ConvTranspose2d(width2 * 2, width2, 2, stride=2)
         self.dec2_conv1 = nn.Conv2d(width2 * 2, width2, 3, padding=1)
-        self.dec2_norm1 = nn.GroupNorm(8, width2)
+        self.dec2_norm1 = nn.GroupNorm(_gn_groups(width2), width2)
         self.dec2_conv2 = nn.Conv2d(width2, width2, 3, padding=1)
-        self.dec2_norm2 = nn.GroupNorm(8, width2)
+        self.dec2_norm2 = nn.GroupNorm(_gn_groups(width2), width2)
 
         self.up1 = nn.ConvTranspose2d(width2, width1, 2, stride=2)
         self.dec1_conv1 = nn.Conv2d(width1 * 2, width1, 3, padding=1)
-        self.dec1_norm1 = nn.GroupNorm(8, width1)
+        self.dec1_norm1 = nn.GroupNorm(_gn_groups(width1), width1)
         self.dec1_conv2 = nn.Conv2d(width1, width1, 3, padding=1)
-        self.dec1_norm2 = nn.GroupNorm(8, width1)
+        self.dec1_norm2 = nn.GroupNorm(_gn_groups(width1), width1)
 
         self.out_conv = nn.Conv2d(width1, 2, 1)
 
