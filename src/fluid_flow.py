@@ -17,9 +17,10 @@ NUM_EPOCHS = 200
 BATCH_SIZE = 64
 GRID_SIZE = 32
 DT = 0.1
-GRAVITY = 1.0
+GRAVITY = 5.0
 DIFFUSIVITY = 0.01
-NUM_EVAL_ANGLES = 16
+NUM_BUOYANT_STEPS = 5  # accumulate multiple steps so gravity dominates
+NUM_EVAL_ANGLES = 8
 
 
 def so2_eval_angles(n=NUM_EVAL_ANGLES):
@@ -232,12 +233,17 @@ class IsotropicFlowDataset(Dataset):
 
 class BuoyantFlowDataset(Dataset):
     """
-    Synthetic 2D buoyant flow with gravity. Breaks rotation symmetry.
+    Synthetic 2D buoyant flow with gravity. Strongly breaks rotation symmetry.
 
-    Each sample: (state_t, state_t+dt) where state = (vx, vy, T),
-    a 3-channel field. Gravity adds buoyancy: warm rises, cold sinks.
-    A model cannot learn equivariance purely from this dataset because
-    gravity picks out the y-axis.
+    Key differences from IsotropicFlowDataset:
+    - Background stratification: warm at bottom (y=-1), cold at top (y=+1)
+    - Temperature blobs are biased: warm blobs placed low, cold blobs placed high
+    - Multiple time steps are accumulated so gravity dominates the dynamics
+    - Stronger gravity constant
+
+    A model cannot learn rotation equivariance from this dataset because
+    gravity picks out the y-axis, and the initial conditions themselves
+    have a strong vertical bias.
     """
 
     def __init__(self, n_samples=10000, grid_size=GRID_SIZE, dt=DT, rotate=False):
@@ -247,6 +253,7 @@ class BuoyantFlowDataset(Dataset):
         self.rotate = rotate
         self.gravity = GRAVITY
         self.diffusivity = DIFFUSIVITY
+        self.n_steps = NUM_BUOYANT_STEPS
 
         coords = torch.linspace(-1, 1, grid_size)
         self.yy, self.xx = torch.meshgrid(coords, coords, indexing="ij")
@@ -262,7 +269,10 @@ class BuoyantFlowDataset(Dataset):
         self.states_tp1 = []
         for _ in range(n_samples):
             state_t = self._random_state()
-            state_tp1 = self._step(state_t)
+            # Accumulate multiple time steps so gravity reshapes the flow
+            state_tp1 = state_t
+            for _ in range(self.n_steps):
+                state_tp1 = self._step(state_tp1)
             self.states_t.append(state_t)
             self.states_tp1.append(state_tp1)
 
@@ -270,15 +280,23 @@ class BuoyantFlowDataset(Dataset):
         self.states_tp1 = torch.stack(self.states_tp1)
 
     def _random_state(self):
+        """
+        Generate initial state with strong vertical bias.
+
+        Temperature has background stratification (warm bottom, cold top)
+        plus biased blobs: warm blobs placed in the lower half,
+        cold blobs in the upper half.
+        """
         vx = torch.zeros_like(self.xx)
         vy = torch.zeros_like(self.xx)
 
-        n_vel = torch.randint(1, 4, (1,)).item()
+        # Small random velocity perturbations (weak compared to gravity)
+        n_vel = torch.randint(1, 3, (1,)).item()
         for _ in range(n_vel):
             kind = torch.randint(0, 3, (1,)).item()
             cx = (torch.rand(1) * 2 - 1).item() * 0.6
             cy = (torch.rand(1) * 2 - 1).item() * 0.6
-            strength = (torch.rand(1) * 2 - 1).item() * 0.3
+            strength = (torch.rand(1) * 2 - 1).item() * 0.15
 
             dx = self.xx - cx
             dy = self.yy - cy
@@ -295,13 +313,24 @@ class BuoyantFlowDataset(Dataset):
                 vx += strength * dx / r2
                 vy += strength * dy / r2
 
-        T = torch.zeros_like(self.xx)
-        n_blobs = torch.randint(2, 6, (1,)).item()
+        # Background stratification: warm at bottom (-y), cold at top (+y)
+        T = -self.yy.clone() * 0.5
+
+        # Biased blobs: warm blobs in lower half, cold in upper half
+        n_blobs = torch.randint(3, 7, (1,)).item()
         for _ in range(n_blobs):
             cx = (torch.rand(1) * 2 - 1).item() * 0.7
-            cy = (torch.rand(1) * 2 - 1).item() * 0.7
-            sigma = 0.1 + torch.rand(1).item() * 0.2
-            amplitude = (torch.rand(1) * 2 - 1).item()
+            is_warm = torch.rand(1).item() > 0.5
+            if is_warm:
+                # Warm blob biased toward bottom (y < 0)
+                cy = -0.2 - torch.rand(1).item() * 0.6
+                amplitude = 0.3 + torch.rand(1).item() * 0.7
+            else:
+                # Cold blob biased toward top (y > 0)
+                cy = 0.2 + torch.rand(1).item() * 0.6
+                amplitude = -(0.3 + torch.rand(1).item() * 0.7)
+
+            sigma = 0.08 + torch.rand(1).item() * 0.15
             blob = amplitude * torch.exp(
                 -((self.xx - cx) ** 2 + (self.yy - cy) ** 2) / (2 * sigma ** 2)
             )
