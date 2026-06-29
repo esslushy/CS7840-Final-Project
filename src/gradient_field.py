@@ -7,8 +7,7 @@ import torch.optim as optim
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from HSIC import cka
-from utils import split_array_randomly, Random90Rotation
+from utils import UnifiedEquivarianceTracker, Random90Rotation
 from collections import defaultdict
 from Models.GradientFieldNets import UNet, CNN, ViT, NaiveNet
 
@@ -48,7 +47,7 @@ def sobel_gradient(images):
     grad_y = nn.functional.conv2d(images, sobel_y, padding=1, groups=C).mean(dim=1, keepdim=True)
     return torch.cat([grad_x, grad_y], dim=1)
 
-def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, finetune: Path):
+def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if dataset == "cifar":
@@ -85,14 +84,13 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
     statistics = {
         "equivariant_loss": [],
         "train_loss": [],
-        "test_loss": [],
-        "baseline_cka": []
+        "test_loss": []
     }
 
     Path("models").mkdir(exist_ok=True)
     Path("results").mkdir(exist_ok=True)
 
-    update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device)
+    update_statistics(net, criterion, statistics, trainloader, testloader, device)
 
     for epoch in range(NUM_EPOCHS):
         net.train()
@@ -112,12 +110,11 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
 
             running_loss += loss.item()
         print(f"[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}")
-        net.eval()
-        update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device)
+        update_statistics(net, criterion, statistics, trainloader, testloader, device)
 
     print('Finished Training')
 
-    tag = f"gradient_field_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}"
+    tag = f"gradient_field_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}{'_finetuned' if finetune else ''}"
     torch.save(net.state_dict(), f"models/{tag}_model.pth")
     with open(f"results/{tag}_statistics.json", "wt+") as f:
         json.dump(statistics, f)
@@ -155,21 +152,22 @@ def load_mnist(rotation):
     return trainset, testset
 
 
-def update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device):
+def update_statistics(net, criterion, statistics, trainloader, testloader, device):
+    net.eval()
     running_train_loss = 0.0
     for data in trainloader:
         inputs, labels = data
         inputs = inputs.to(device)
 
         target_grad = sobel_gradient(inputs)
-        pred_grad, _ = net(inputs)
+        pred_grad, layers = net(inputs)
 
         running_train_loss += criterion(pred_grad, target_grad).item()
     statistics["train_loss"].append(running_train_loss / len(trainloader))
 
     running_test_loss = 0.0
     running_equivariant_error = defaultdict(float)
-    running_cka_baseline = defaultdict(float)
+    running_equivariant_error = {k: [UnifiedEquivarianceTracker(device) for _ in range(3)] for k in layers.keys()}
     with torch.inference_mode():
         for data in testloader:
             inputs, labels = data
@@ -189,23 +187,15 @@ def update_statistics(kernel, net, criterion, statistics, trainloader, testloade
             _, layers_rot270 = net(inputs_rot270)
 
             for key in layers.keys():
-                running_equivariant_error[key] += np.mean([
-                    cka(layers[key], layers_rot90[key], kernel=kernel).item(),
-                    cka(layers[key], layers_rot180[key], kernel=kernel).item(),
-                    cka(layers[key], layers_rot270[key], kernel=kernel).item()
-                ])
-                layers_x, layers_y = split_array_randomly(layers[key])
-                running_cka_baseline[key] += cka(layers_x, layers_y, kernel=kernel).item()
+                for idx, layer in enumerate([layers_rot90, layers_rot180, layers_rot270]):
+                    running_equivariant_error[key][idx].update(layers[key], layer[key])
     statistics["test_loss"].append(running_test_loss / len(testloader))
-    statistics["equivariant_loss"].append({k: v / len(testloader) for k,v in running_equivariant_error.items()})
-    statistics["baseline_cka"].append({k: v / len(testloader) for k,v in running_cka_baseline.items()})
-
+    statistics["equivariant_loss"].append({k: np.mean([x.compute() for x in v]) for k,v in running_equivariant_error.items()})
 
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("--model", help="Which model to use", type=str, choices=("cnn", "unet", "naive", "vit"), default="unet")
     args.add_argument("--dataset", help="The dataset to train on.", type=str, choices=("cifar", "mnist"), default="mnist")
-    args.add_argument("--kernel", help="Which kernel to use for CKA", type=str, choices=["rbf", "linear"], default="linear")
     args.add_argument("--rotation", help="Whether to train with rotation applied", action="store_true")
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
     args.add_argument("--finetune", help="The model to load for extra finetuning", type=Path)
@@ -214,4 +204,4 @@ if __name__ == "__main__":
     if args.model == "naive" and args.thicker:
         raise Exception("Can't make a thicker naive model.")
 
-    main(args.model, args.dataset, args.kernel, args.rotation, args.thicker, args.finetune)
+    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune)

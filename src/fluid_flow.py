@@ -6,9 +6,7 @@ import torch.optim as optim
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from HSIC import cka
-from utils import split_array_randomly
-from collections import defaultdict
+from utils import UnifiedEquivarianceTracker
 from torch.utils.data import Dataset, DataLoader
 from Models.FluidFlowNets import UNet, CNN, ViT, NaiveNet
 import os
@@ -20,7 +18,7 @@ DT = 0.1
 GRAVITY = 5.0
 DIFFUSIVITY = 0.01
 NUM_BUOYANT_STEPS = 5  # accumulate multiple steps so gravity dominates
-NUM_EVAL_ANGLES = 8
+NUM_EVAL_ANGLES = 16
 
 
 def so2_eval_angles(n=NUM_EVAL_ANGLES):
@@ -380,7 +378,7 @@ class BuoyantFlowDataset(Dataset):
 # Training
 # ---------------------------------------------------------------------------
 
-def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, finetune: Path):
+def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if dataset == "isotropic":
@@ -430,7 +428,7 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
     os.makedirs("models", exist_ok=True)
     os.makedirs("results", exist_ok=True)
 
-    update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device, rotate_fn)
+    update_statistics(net, criterion, statistics, trainloader, testloader, device, rotate_fn)
 
     for epoch in range(NUM_EPOCHS):
         net.train()
@@ -449,12 +447,11 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
 
             running_loss += loss.item()
         print(f"[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}")
-        net.eval()
-        update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device, rotate_fn)
+        update_statistics(net, criterion, statistics, trainloader, testloader, device, rotate_fn)
 
     print('Finished Training')
 
-    tag = f"fluid_flow_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}_kernel_{kernel}{'_finetuned' if finetune else ''}"
+    tag = f"fluid_flow_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}{'_finetuned' if finetune else ''}"
     torch.save(net.state_dict(), f"models/{tag}_model.pth")
     with open(f"results/{tag}_statistics.json", "wt+") as f:
         json.dump(statistics, f)
@@ -464,20 +461,20 @@ def main(model: str, dataset: str, kernel: str, rotation: bool, thicker: bool, f
 # Evaluation
 # ---------------------------------------------------------------------------
 
-def update_statistics(kernel, net, criterion, statistics, trainloader, testloader, device, rotate_fn):
+def update_statistics(net, criterion, statistics, trainloader, testloader, device, rotate_fn):
+    net.eval()
     running_train_loss = 0.0
     for data in trainloader:
         field_t, field_tp1 = data
         field_t = field_t.to(device)
         field_tp1 = field_tp1.to(device)
 
-        pred, _ = net(field_t)
+        pred, layers = net(field_t)
         running_train_loss += criterion(pred, field_tp1).item()
     statistics["train_loss"].append(running_train_loss / len(trainloader))
 
     running_test_loss = 0.0
-    running_equivariant_error = defaultdict(float)
-    running_cka_baseline = defaultdict(float)
+    running_equivariant_error = {k: [UnifiedEquivarianceTracker(device) for _ in range(NUM_EVAL_ANGLES)] for k in layers.keys()}
 
     # Deterministic angles: evenly-spaced SO(2) elements via Lie algebra
     eval_angles = so2_eval_angles()
@@ -500,26 +497,16 @@ def update_statistics(kernel, net, criterion, statistics, trainloader, testloade
                 rotated_layers_list.append(layers_rotated)
 
             for key in layers.keys():
-                cka_scores = []
-                for layers_rotated in rotated_layers_list:
-                    cka_scores.append(
-                        cka(layers[key], layers_rotated[key], kernel=kernel).item()
-                    )
-                running_equivariant_error[key] += np.mean(cka_scores)
-
-                layers_x, layers_y = split_array_randomly(layers[key])
-                running_cka_baseline[key] += cka(layers_x, layers_y, kernel=kernel).item()
+                for idx, layers_rotated in enumerate(rotated_layers_list):
+                    running_equivariant_error[key][idx].update(layers[key], layers_rotated[key])
 
     statistics["test_loss"].append(running_test_loss / len(testloader))
-    statistics["equivariant_loss"].append({k: v / len(testloader) for k,v in running_equivariant_error.items()})
-    statistics["baseline_cka"].append({k: v / len(testloader) for k,v in running_cka_baseline.items()})
-
+    statistics["equivariant_loss"].append({k: np.mean([x.compute() for x in v]) for k,v in running_equivariant_error.items()})
 
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("--model", help="Which model to use", type=str, choices=("cnn", "unet", "naive", "vit"), default="unet")
     args.add_argument("--dataset", help="The dataset to train on.", type=str, choices=("isotropic", "buoyant"), default="isotropic")
-    args.add_argument("--kernel", help="Which kernel to use for CKA", type=str, choices=["rbf", "linear"], default="linear")
     args.add_argument("--rotation", help="Whether to train with rotation applied", action="store_true")
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
     args.add_argument("--finetune", help="The model to load for extra finetuning", type=Path)
@@ -528,4 +515,4 @@ if __name__ == "__main__":
     if args.model == "naive" and args.thicker:
         raise Exception("Can't make a thicker naive model.")
 
-    main(args.model, args.dataset, args.kernel, args.rotation, args.thicker, args.finetune)
+    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune)

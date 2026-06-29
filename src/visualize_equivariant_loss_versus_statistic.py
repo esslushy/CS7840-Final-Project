@@ -24,20 +24,12 @@ def main(statistics_pth: Path, statistic: str):
         ax.set_xlabel(statistic.replace("_", " ").title())
         ax.set_ylim(bottom=0, top=1)
         if idx == 0:
-            ax.set_ylabel("CKA (Higher is More Equivariant)")
+            ax.set_ylabel("Renyi2 NMI (Higher is More Equivariant)")
 
         for jdx in range(num_epochs):
             eq_values = list(statistics["equivariant_loss"][jdx].values())
-            bl_values = list(statistics["baseline_cka"][jdx].values())
             ax.plot(statistics[statistic][jdx], eq_values[idx],
                     marker='o', c=colors[jdx])
-            ax.plot(statistics[statistic][jdx], bl_values[idx],
-                    marker='x', c=colors[jdx], linestyle='none', alpha=0.5)
-
-    # Legend entries for marker styles
-    axes[-1].plot([], [], 'ko', label='Rotation CKA')
-    axes[-1].plot([], [], 'kx', alpha=0.5, label='Unrelated Baseline')
-    axes[-1].legend(loc='lower right')
 
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1))
     sm._A = []

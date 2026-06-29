@@ -9,7 +9,6 @@ def main(statistics_pth: Path):
         data = json.load(f)
 
     equivariant_loss = data["equivariant_loss"]
-    cka_baseline = data["baseline_cka"]
 
     fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
 
@@ -19,7 +18,7 @@ def main(statistics_pth: Path):
     ax.set_xticks(range(len(layer_names)))
     ax.set_xticklabels(layer_names, rotation=45, ha='right')
     ax.set_ylim(bottom=0, top=1)
-    ax.set_ylabel("CKA (Higher is More Equivariant)")
+    ax.set_ylabel("Renyi2 NMI (Higher is More Equivariant)")
 
     n_epochs = len(equivariant_loss)
     cmap = plt.get_cmap('gnuplot')
@@ -31,13 +30,6 @@ def main(statistics_pth: Path):
         layers = range(len(values))
         ax.plot(layers, values, marker='o', c=colors[i], alpha=0.7)
 
-    # Plot baseline for each epoch with dashed lines, same color scheme
-    for i in range(n_epochs):
-        values = list(cka_baseline[i].values())
-        layers = range(len(values))
-        ax.plot(layers, values, marker='x', c=colors[i],
-                linestyle='--', alpha=0.5, linewidth=1)
-
     # Colorbar for epochs
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1))
     sm._A = []
@@ -45,11 +37,6 @@ def main(statistics_pth: Path):
     cbar.set_label('Number Training Epochs')
     cbar.ax.text(0.5, -0.01, 0, transform=cbar.ax.transAxes, va='top', ha='center')
     cbar.ax.text(0.5, 1.0, str(n_epochs - 1), transform=cbar.ax.transAxes, va='bottom', ha='center')
-
-    # Legend entries for line styles
-    ax.plot([], [], 'k-', marker='o', label='Rotation CKA')
-    ax.plot([], [], 'k--', marker='x', label='Unrelated Baseline')
-    ax.legend(loc='lower left', fontsize='x-large')
 
     fig.tight_layout()
 
