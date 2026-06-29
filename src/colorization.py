@@ -6,7 +6,7 @@ import torch.optim as optim
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from Models.GradientFieldNets import UNet, CNN, NaiveNet, ViT
+from Models.ColorizationNets import UNet, CNN, NaiveNet, ViT
 from utils import Random90Rotation, UnifiedEquivarianceTracker
 import numpy as np
 
