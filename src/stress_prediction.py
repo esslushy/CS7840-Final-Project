@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as Fn
@@ -7,12 +8,14 @@ import json
 from argparse import ArgumentParser
 from pathlib import Path
 from Models.StressPredictionNets import UNet, CNN, ViT, NaiveNet
-from utils import UnifiedEquivarianceTracker
+from utils import EquivarianceTracker
 from torch.utils.data import Dataset, DataLoader
 
 NUM_EPOCHS = 200
 BATCH_SIZE = 64
 GRID_SIZE = 32
+
+ANGLES = (90, 180, 270)   # non-identity C4 rotations tracked for equivariance
 
 
 # ---------------------------------------------------------------------------
@@ -386,13 +389,19 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
     statistics = {
         "equivariant_loss": [],
         "train_loss": [],
-        "test_loss": []
+        "test_loss": [],
     }
 
     Path("models").mkdir(exist_ok=True)
     Path("results").mkdir(exist_ok=True)
 
+    tag = (f"stress_prediction_{'learned_equivariant' if rotation else 'non_equivariant'}"
+           f"_{model}{'_thicker' if thicker else ''}_dataset_{dataset}"
+           f"{'_finetuned' if finetune else ''}")
+
+    # baseline measurement before any training, then persist immediately
     update_statistics(net, criterion, statistics, trainloader, testloader, device)
+    save_all(net, statistics, tag)
 
     for epoch in range(NUM_EPOCHS):
         net.train()
@@ -411,18 +420,33 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
 
             running_loss += loss.item()
         print(f"[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}")
-        net.eval()
+
+        # measure and persist EVERY epoch so an interrupted run keeps all stats so far
         update_statistics(net, criterion, statistics, trainloader, testloader, device)
+        save_all(net, statistics, tag)
 
     print('Finished Training')
+    # already saved each epoch; final save is just belt-and-suspenders
+    save_all(net, statistics, tag)
 
-    tag = f"stress_prediction_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}{'_finetuned' if finetune else ''}"
-    torch.save(net.state_dict(), f"models/{tag}_model.pth")
-    with open(f"results/{tag}_statistics.json", "wt+") as f:
+
+def save_all(net, statistics, tag):
+    """Persist statistics and model weights atomically (write-temp-then-rename),
+    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
+    stats_path = f"results/{tag}_statistics.json"
+    tmp_stats = stats_path + ".tmp"
+    with open(tmp_stats, "wt") as f:
         json.dump(statistics, f)
+    os.replace(tmp_stats, stats_path)
+
+    model_path = f"models/{tag}_model.pth"
+    tmp_model = model_path + ".tmp"
+    torch.save(net.state_dict(), tmp_model)
+    os.replace(tmp_model, model_path)
 
 
 def update_statistics(net, criterion, statistics, trainloader, testloader, device):
+    net.eval()
     running_train_loss = 0.0
     for data in trainloader:
         force, stress = data
@@ -433,30 +457,40 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
         running_train_loss += criterion(output, stress).item()
     statistics["train_loss"].append(running_train_loss / len(trainloader))
 
-    running_test_loss = 0.0
-    running_equivariant_error = {k: [UnifiedEquivarianceTracker(device) for _ in range(3)] for k in layers.keys()}
+    # per-angle test loss (0 = unrotated). The force->stress map is EQUIVARIANT:
+    # the input force rotates as a VECTOR, the target stress as a rank-2 TENSOR.
+    running_test_loss = {0: 0.0, 90: 0.0, 180: 0.0, 270: 0.0}
+    # per-layer, PER-ANGLE equivariance tracker (kept separate, not averaged)
+    running_equivariant = {k: {a: EquivarianceTracker(device) for a in ANGLES}
+                           for k in layers.keys()}
     with torch.inference_mode():
         for data in testloader:
             force, stress = data
             force = force.to(device)
             stress = stress.to(device)
 
+            # unrotated prediction + activations (equivariance reference)
             output, layers = net(force)
-            running_test_loss += criterion(output, stress).item()
+            running_test_loss[0] += criterion(output, stress).item()
 
-            force_rot90 = torch.rot90(force, 1, dims=(-2, -1))
-            force_rot180 = torch.rot90(force, 2, dims=(-2, -1))
-            force_rot270 = torch.rot90(force, 3, dims=(-2, -1))
+            for angle in ANGLES:
+                theta = torch.tensor([angle * np.pi / 180.0], device=device)
+                force_rot = rotate_force_field(force, theta)       # vector rotation
+                stress_rot = rotate_stress_field(stress, theta)    # rank-2 tensor rotation
+                output_rot, layers_rot = net(force_rot)            # one forward, reused for loss + equivariance
 
-            *_, layers_rot90 = net(force_rot90)
-            *_, layers_rot180 = net(force_rot180)
-            *_, layers_rot270 = net(force_rot270)
+                running_test_loss[angle] += criterion(output_rot, stress_rot).item()
 
-            for key in layers.keys():
-                for idx, layer in enumerate([layers_rot90, layers_rot180, layers_rot270]):
-                    running_equivariant_error[key][idx].update(layers[key], layer[key])
-    statistics["test_loss"].append(running_test_loss / len(testloader))
-    statistics["equivariant_loss"].append({k: np.mean([x.compute() for x in v]) for k, v in running_equivariant_error.items()})
+                for key in layers.keys():
+                    running_equivariant[key][angle].update(layers[key], layers_rot[key])
+
+    n_test = len(testloader)
+    statistics["test_loss"].append({angle: v / n_test for angle, v in running_test_loss.items()})
+    # store the full tracker stats (z, p, floor_std, ...) per layer, per angle
+    statistics["equivariant_loss"].append({
+        key: {angle: running_equivariant[key][angle].compute_stats() for angle in ANGLES}
+        for key in running_equivariant
+    })
 
 
 if __name__ == "__main__":

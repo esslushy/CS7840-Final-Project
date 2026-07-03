@@ -5,7 +5,7 @@ import torch.optim as optim
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from utils import UnifiedEquivarianceTracker
+from utils import EquivarianceTracker
 from torch.utils.data import Dataset, DataLoader
 import os
 
@@ -15,8 +15,7 @@ NUM_PARTICLES = 128
 DT = 0.1
 GRAVITY = 5.0
 NUM_BUOYANT_STEPS = 5
-NUM_EVAL_ANGLES = 8
-
+NUM_EVAL_ANGLES = 16
 
 def so2_eval_angles(n=NUM_EVAL_ANGLES):
     """
@@ -24,8 +23,14 @@ def so2_eval_angles(n=NUM_EVAL_ANGLES):
 
     SO(2) has a single generator J = [[0, -1], [1, 0]].
     We sample t_k = 2π * k / (n+1) for k = 1, ..., n, excluding identity.
+
+    Returns (radians_tensor, degree_labels) where degree_labels are integer
+    degrees used as JSON-friendly keys for the per-angle statistics.
     """
-    return torch.tensor([2 * np.pi * k / (n + 1) for k in range(1, n + 1)])
+    ks = range(1, n + 1)
+    radians = torch.tensor([2 * np.pi * k / (n + 1) for k in ks])
+    degrees = [int(round(360.0 * k / (n + 1))) for k in ks]
+    return radians, degrees
 
 
 # ---------------------------------------------------------------------------
@@ -337,13 +342,18 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
         "equivariant_loss": [],
         "train_loss": [],
         "test_loss": [],
-        "baseline_cka": []
     }
 
     os.makedirs("models", exist_ok=True)
     os.makedirs("results", exist_ok=True)
 
+    tag = (f"fluid_flow_particles_{'learned_equivariant' if rotation else 'non_equivariant'}"
+           f"_{model}{'_thicker' if thicker else ''}_dataset_{dataset}"
+           f"{'_finetuned' if finetune else ''}")
+
+    # baseline measurement before any training, then persist immediately
     update_statistics(net, criterion, statistics, trainloader, testloader, device, rotate_fn)
+    save_all(net, statistics, tag)
 
     for epoch in range(NUM_EPOCHS):
         net.train()
@@ -362,14 +372,29 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
 
             running_loss += loss.item()
         print(f"[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}")
+
+        # measure and persist EVERY epoch so an interrupted run keeps all stats so far
         update_statistics(net, criterion, statistics, trainloader, testloader, device, rotate_fn)
+        save_all(net, statistics, tag)
 
     print('Finished Training')
+    # already saved each epoch; final save is just belt-and-suspenders
+    save_all(net, statistics, tag)
 
-    tag = f"fluid_flow_particles_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}{'_finetuned' if finetune else ''}"
-    torch.save(net.state_dict(), f"models/{tag}_model.pth")
-    with open(f"results/{tag}_statistics.json", "wt+") as f:
+
+def save_all(net, statistics, tag):
+    """Persist statistics and model weights atomically (write-temp-then-rename),
+    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
+    stats_path = f"results/{tag}_statistics.json"
+    tmp_stats = stats_path + ".tmp"
+    with open(tmp_stats, "wt") as f:
         json.dump(statistics, f)
+    os.replace(tmp_stats, stats_path)
+
+    model_path = f"models/{tag}_model.pth"
+    tmp_model = model_path + ".tmp"
+    torch.save(net.state_dict(), tmp_model)
+    os.replace(tmp_model, model_path)
 
 
 # ---------------------------------------------------------------------------
@@ -388,10 +413,16 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
         running_train_loss += criterion(pred, state_tp1).item()
     statistics["train_loss"].append(running_train_loss / len(trainloader))
 
-    running_test_loss = 0.0
-    running_equivariant_error = {k: [UnifiedEquivarianceTracker(device) for _ in range(NUM_EVAL_ANGLES)] for k in layers.keys()}
+    eval_angles, angle_labels = so2_eval_angles()
 
-    eval_angles = so2_eval_angles()
+    # per-angle test loss (0 = unrotated). The dynamics map is EQUIVARIANT, so the
+    # target for a rotated input is the ROTATED next state.
+    running_test_loss = {0: 0.0}
+    for deg in angle_labels:
+        running_test_loss[deg] = 0.0
+    # per-layer, PER-ANGLE equivariance tracker (kept separate, not averaged)
+    running_equivariant = {k: {deg: EquivarianceTracker(device) for deg in angle_labels}
+                           for k in layers.keys()}
 
     with torch.inference_mode():
         for data in testloader:
@@ -399,23 +430,29 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
             state_t = state_t.to(device)
             state_tp1 = state_tp1.to(device)
 
+            # unrotated prediction + activations (equivariance reference)
             pred, layers = net(state_t)
-            running_test_loss += criterion(pred, state_tp1).item()
+            running_test_loss[0] += criterion(pred, state_tp1).item()
 
-            rotated_layers_list = []
-            for theta in eval_angles:
+            for theta, deg in zip(eval_angles, angle_labels):
                 theta_t = theta.to(device)
                 state_rotated = rotate_fn(state_t, theta_t)
-                _, layers_rotated = net(state_rotated)
-                rotated_layers_list.append(layers_rotated)
+                target_rotated = rotate_fn(state_tp1, theta_t)
+                pred_rot, layers_rotated = net(state_rotated)   # one forward, reused for loss + equivariance
 
-            for key in layers.keys():
-                cka_scores = []
-                for idx, layers_rotated in enumerate(rotated_layers_list):
-                    running_equivariant_error[key][idx].update(layers[key], layers_rotated[key])
+                running_test_loss[deg] += criterion(pred_rot, target_rotated).item()
 
-    statistics["test_loss"].append(running_test_loss / len(testloader))
-    statistics["equivariant_loss"].append({k: np.mean([x.compute() for x in v]) for k,v in running_equivariant_error.items()})
+                for key in layers.keys():
+                    running_equivariant[key][deg].update(layers[key], layers_rotated[key])
+
+    n_test = len(testloader)
+    statistics["test_loss"].append({angle: v / n_test for angle, v in running_test_loss.items()})
+    # store the full tracker stats (z, p, floor_std, ...) per layer, per angle
+    statistics["equivariant_loss"].append({
+        key: {deg: running_equivariant[key][deg].compute_stats() for deg in angle_labels}
+        for key in running_equivariant
+    })
+
 
 if __name__ == "__main__":
     args = ArgumentParser()

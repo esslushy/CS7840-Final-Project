@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import numpy as np
@@ -6,12 +7,30 @@ import json
 from argparse import ArgumentParser
 from pathlib import Path
 from Models.ImageFlowNets import UNet, CNN, ViT, NaiveNet
-from utils import Random90Rotation, UnifiedEquivarianceTracker
+from utils import EquivarianceTracker
 from torch.utils.data import Dataset, DataLoader
 
 NUM_EPOCHS = 200
 BATCH_SIZE = 64
 GRID_SIZE = 32
+WAVE_DT = 0.3
+
+ANGLES = (90, 180, 270)   # non-identity C4 rotations tracked for equivariance
+
+
+def rotate_flow(flow, k):
+    """
+    Rotate a batched 2D vector flow field (B, 2, H, W) by k * 90 degrees.
+
+    A velocity field transforms as a vector field: the grid is spatially
+    rotated AND the (vx, vy) components are rotated. This matches the
+    rotation convention used in WaterSurfaceDataset.__getitem__.
+    """
+    flow_r = torch.rot90(flow, k, dims=(-2, -1))
+    fx, fy = flow_r[:, 0:1], flow_r[:, 1:2]
+    c = [1, 0, -1, 0][k]
+    s = [0, 1, 0, -1][k]
+    return torch.cat([c * fx - s * fy, s * fx + c * fy], dim=1)
 
 
 # ---------------------------------------------------------------------------
@@ -23,22 +42,25 @@ class WaterSurfaceDataset(Dataset):
     Synthetic water surface images with analytically computed flow fields.
 
     Each sample is a superposition of linear deep-water wave components.
-    The rendered image is the surface elevation (height map).
-    The target is the surface velocity field, derived from wave theory:
+    The input is two consecutive surface elevation snapshots (t=0 and t=dt),
+    so the model can see which direction each wave is moving.
+    The target is the surface velocity field.
 
-        For each wave component η_n = A_n cos(k_n · r + φ_n):
-            u_n = A_n ω_n k̂_n cos(k_n · r + φ_n)
+    For each wave component η_n = A_n cos(k_n · r + φ_n):
+        η(t=0)  = A_n cos(k_n · r + φ_n)
+        η(t=dt) = A_n cos(k_n · r + φ_n - ω_n * dt)
+        u_n     = A_n ω_n k̂_n cos(k_n · r + φ_n)
 
-        where ω_n = sqrt(|k_n|) (deep water dispersion, normalised g=1)
-        and k̂_n is the unit wave propagation direction.
+    where ω_n = sqrt(|k_n|) (deep water dispersion, normalised g=1).
 
-    Input:  (1, H, W) surface elevation image
-    Output: (2, H, W) surface velocity field (vx, vy)
+    Input:  (2, H, W) — surface elevation at t=0 and t=dt
+    Output: (2, H, W) — surface velocity field (vx, vy)
     """
 
-    def __init__(self, n_samples=10000, grid_size=GRID_SIZE, directional=False, rotate=False):
+    def __init__(self, n_samples=10000, grid_size=GRID_SIZE, dt=WAVE_DT, directional=False, rotate=False):
         self.n_samples = n_samples
         self.grid_size = grid_size
+        self.dt = dt
         self.directional = directional
         self.rotate = rotate
 
@@ -48,25 +70,23 @@ class WaterSurfaceDataset(Dataset):
         self.images = []
         self.flows = []
         for _ in range(n_samples):
-            eta, vx, vy = self._generate_waves()
-            self.images.append(eta.unsqueeze(0))          # (1, H, W)
-            self.flows.append(torch.stack([vx, vy], dim=0))  # (2, H, W)
+            eta_t0, eta_t1, vx, vy = self._generate_waves()
+            self.images.append(torch.stack([eta_t0, eta_t1], dim=0))  # (2, H, W)
+            self.flows.append(torch.stack([vx, vy], dim=0))           # (2, H, W)
 
         self.images = torch.stack(self.images)
         self.flows = torch.stack(self.flows)
 
     def _generate_waves(self):
-        eta = torch.zeros_like(self.xx)
+        eta_t0 = torch.zeros_like(self.xx)
+        eta_t1 = torch.zeros_like(self.xx)
         vx = torch.zeros_like(self.xx)
         vy = torch.zeros_like(self.xx)
 
         n_waves = torch.randint(5, 15, (1,)).item()
 
         for _ in range(n_waves):
-            # Wave direction
             if self.directional:
-                # Preferred direction: waves come from the left (positive x)
-                # with spread — mimics wind-driven ocean swell
                 angle = 0.0 + torch.randn(1).item() * 0.4
             else:
                 angle = torch.rand(1).item() * 2 * np.pi
@@ -77,18 +97,18 @@ class WaterSurfaceDataset(Dataset):
 
             A = torch.rand(1).item() * 0.3
             phi = torch.rand(1).item() * 2 * np.pi
-            omega = np.sqrt(k_mag)  # deep water dispersion
+            omega = np.sqrt(k_mag)
 
-            wave = A * torch.cos(kx * self.xx + ky * self.yy + phi)
-            eta += wave
+            phase = kx * self.xx + ky * self.yy + phi
+            eta_t0 += A * torch.cos(phase)
+            eta_t1 += A * torch.cos(phase - omega * self.dt)
 
-            # Surface velocity from linear wave theory
             khat_x = kx / k_mag
             khat_y = ky / k_mag
-            vx += A * omega * khat_x * torch.cos(kx * self.xx + ky * self.yy + phi)
-            vy += A * omega * khat_y * torch.cos(kx * self.xx + ky * self.yy + phi)
+            vx += A * omega * khat_x * torch.cos(phase)
+            vy += A * omega * khat_y * torch.cos(phase)
 
-        return eta, vx, vy
+        return eta_t0, eta_t1, vx, vy
 
     def __len__(self):
         return self.n_samples
@@ -136,13 +156,13 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
     print(f"[{dataset}] Train: {len(trainset)} samples  |  Test: {len(testset)} samples")
 
     if model == "vit":
-        net = ViT(image_size=GRID_SIZE, patch_size=4, dim=256 if thicker else 128, depth=1, heads=1, mlp_dim=256 if thicker else 128, in_channels=1, out_channels=2)
+        net = ViT(image_size=GRID_SIZE, patch_size=4, dim=256 if thicker else 128, depth=1, heads=1, mlp_dim=256 if thicker else 128, in_channels=2, out_channels=2)
     elif model == "naive":
-        net = NaiveNet(in_channels=1, out_channels=2)
+        net = NaiveNet(in_channels=2, out_channels=2)
     elif model == "cnn":
-        net = CNN(width1=256 if thicker else 120, width2=256 if thicker else 84, in_channels=1, out_channels=2)
+        net = CNN(width1=256 if thicker else 120, width2=256 if thicker else 84, in_channels=2, out_channels=2)
     elif model == "unet":
-        net = UNet(width1=256 if thicker else 120, width2=256 if thicker else 84, in_channels=1, out_channels=2)
+        net = UNet(width1=256 if thicker else 120, width2=256 if thicker else 84, in_channels=2, out_channels=2)
     else:
         raise ValueError(f"No such model {model}")
     net = net.to(device)
@@ -155,13 +175,19 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
     statistics = {
         "equivariant_loss": [],
         "train_loss": [],
-        "test_loss": []
+        "test_loss": [],
     }
 
     Path("models").mkdir(exist_ok=True)
     Path("results").mkdir(exist_ok=True)
 
+    tag = (f"image_flow_{'learned_equivariant' if rotation else 'non_equivariant'}"
+           f"_{model}{'_thicker' if thicker else ''}_dataset_{dataset}"
+           f"{'_finetuned' if finetune else ''}")
+
+    # baseline measurement before any training, then persist immediately
     update_statistics(net, criterion, statistics, trainloader, testloader, device)
+    save_all(net, statistics, tag)
 
     for epoch in range(NUM_EPOCHS):
         net.train()
@@ -180,18 +206,33 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
 
             running_loss += loss.item()
         print(f"[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}")
-        net.eval()
+
+        # measure and persist EVERY epoch so an interrupted run keeps all stats so far
         update_statistics(net, criterion, statistics, trainloader, testloader, device)
+        save_all(net, statistics, tag)
 
     print('Finished Training')
+    # already saved each epoch; final save is just belt-and-suspenders
+    save_all(net, statistics, tag)
 
-    tag = f"image_flow_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}{'_finetuned' if finetune else ''}"
-    torch.save(net.state_dict(), f"models/{tag}_model.pth")
-    with open(f"results/{tag}_statistics.json", "wt+") as f:
+
+def save_all(net, statistics, tag):
+    """Persist statistics and model weights atomically (write-temp-then-rename),
+    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
+    stats_path = f"results/{tag}_statistics.json"
+    tmp_stats = stats_path + ".tmp"
+    with open(tmp_stats, "wt") as f:
         json.dump(statistics, f)
+    os.replace(tmp_stats, stats_path)
+
+    model_path = f"models/{tag}_model.pth"
+    tmp_model = model_path + ".tmp"
+    torch.save(net.state_dict(), tmp_model)
+    os.replace(tmp_model, model_path)
 
 
 def update_statistics(net, criterion, statistics, trainloader, testloader, device):
+    net.eval()
     running_train_loss = 0.0
     for data in trainloader:
         image, flow = data
@@ -202,30 +243,40 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
         running_train_loss += criterion(output, flow).item()
     statistics["train_loss"].append(running_train_loss / len(trainloader))
 
-    running_test_loss = 0.0
-    running_equivariant_error = {k: [UnifiedEquivarianceTracker(device) for _ in range(3)] for k in layers.keys()}
+    # per-angle test loss (0 = unrotated). Flow prediction is EQUIVARIANT, so the
+    # target for a rotated input is the rotated flow (spatial + vector components).
+    running_test_loss = {0: 0.0, 90: 0.0, 180: 0.0, 270: 0.0}
+    # per-layer, PER-ANGLE equivariance tracker (kept separate, not averaged)
+    running_equivariant = {k: {a: EquivarianceTracker(device) for a in ANGLES}
+                           for k in layers.keys()}
     with torch.inference_mode():
         for data in testloader:
             image, flow = data
             image = image.to(device)
             flow = flow.to(device)
 
+            # unrotated prediction + activations (equivariance reference)
             output, layers = net(image)
-            running_test_loss += criterion(output, flow).item()
+            running_test_loss[0] += criterion(output, flow).item()
 
-            image_rot90 = torch.rot90(image, 1, dims=(-2, -1))
-            image_rot180 = torch.rot90(image, 2, dims=(-2, -1))
-            image_rot270 = torch.rot90(image, 3, dims=(-2, -1))
+            for angle in ANGLES:
+                k = angle // 90
+                image_rot = torch.rot90(image, k, dims=(-2, -1))
+                flow_rot = rotate_flow(flow, k)
+                output_rot, layers_rot = net(image_rot)   # one forward, reused for loss + equivariance
 
-            *_, layers_rot90 = net(image_rot90)
-            *_, layers_rot180 = net(image_rot180)
-            *_, layers_rot270 = net(image_rot270)
+                running_test_loss[angle] += criterion(output_rot, flow_rot).item()
 
-            for key in layers.keys():
-                for idx, layer in enumerate([layers_rot90, layers_rot180, layers_rot270]):
-                    running_equivariant_error[key][idx].update(layers[key], layer[key])
-    statistics["test_loss"].append(running_test_loss / len(testloader))
-    statistics["equivariant_loss"].append({k: np.mean([x.compute() for x in v]) for k, v in running_equivariant_error.items()})
+                for key in layers.keys():
+                    running_equivariant[key][angle].update(layers[key], layers_rot[key])
+
+    n_test = len(testloader)
+    statistics["test_loss"].append({angle: v / n_test for angle, v in running_test_loss.items()})
+    # store the full tracker stats (z, p, floor_std, ...) per layer, per angle
+    statistics["equivariant_loss"].append({
+        key: {angle: running_equivariant[key][angle].compute_stats() for angle in ANGLES}
+        for key in running_equivariant
+    })
 
 
 if __name__ == "__main__":

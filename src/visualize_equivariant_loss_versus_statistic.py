@@ -22,7 +22,7 @@ def main(statistics_pth: Path, statistic: str):
     for idx, (layer_name, ax) in enumerate(zip(layer_names, axes)):
         ax.set_title(layer_name)
         ax.set_xlabel(statistic.replace("_", " ").title())
-        ax.set_ylim(bottom=0, top=1)
+        ax.set_ylim(bottom=0, top=400)
         if idx == 0:
             ax.set_ylabel("Renyi2 NMI (Higher is More Equivariant)")
 

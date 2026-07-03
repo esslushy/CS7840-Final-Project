@@ -1,3 +1,4 @@
+import os
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -7,11 +8,14 @@ import json
 from argparse import ArgumentParser
 from pathlib import Path
 from Models.InvertNets import CNN
-from utils import Random90Rotation, UnifiedEquivarianceTracker
+from utils import Random90Rotation, EquivarianceTracker
 import numpy as np
 
 NUM_EPOCHS = 200
 BATCH_SIZE = 64
+
+ANGLES = (90, 180, 270)   # non-identity C4 rotations tracked for equivariance
+
 
 def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -28,23 +32,23 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
                                                 download=True, transform=transform_train)
 
         testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                            download=True, transform=transform_test)
+                                               download=True, transform=transform_test)
         in_channels = 3
     elif dataset == "mnist":
         trainset = torchvision.datasets.MNIST(root='./data', train=False,
-                                            download=True, transform=transform_train)
-        
+                                              download=True, transform=transform_train)
+
         testset = torchvision.datasets.MNIST(root='./data', train=False,
-                                            download=True, transform=transform_test)
+                                             download=True, transform=transform_test)
         in_channels = 1
     else:
         raise ValueError(f"No such dataset: {dataset}")
-                            
+
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
-                                            shuffle=True, num_workers=2)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE, # Get all of the images.
-                                            shuffle=False, num_workers=2)
-    
+                                              shuffle=True, num_workers=2)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE,  # Get all of the images.
+                                             shuffle=False, num_workers=2)
+
     if model == "vit":
         raise NotImplementedError()
     elif model == "naive":
@@ -63,13 +67,19 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
     statistics = {
         "equivariant_loss": [],
         "train_loss": [],
-        "test_loss": []
+        "test_loss": [],
     }
 
     Path("models").mkdir(exist_ok=True)
     Path("results").mkdir(exist_ok=True)
 
+    tag = (f"image_inversion_{'learned_equivariant' if rotation else 'non_equivariant'}"
+           f"_{model}{'_thicker' if thicker else ''}_dataset_{dataset}"
+           f"{'_finetuned' if finetune else ''}")
+
+    # baseline measurement before any training, then persist immediately
     update_statistics(net, criterion, statistics, trainloader, testloader, device)
+    save_all(net, statistics, tag)
 
     for epoch in range(NUM_EPOCHS):
         net.train()
@@ -88,15 +98,29 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
 
             running_loss += loss.item()
         print(f"[{epoch + 1}] loss: {running_loss / len(trainloader):.3f}")
+
+        # measure and persist EVERY epoch so an interrupted run keeps all stats so far
         update_statistics(net, criterion, statistics, trainloader, testloader, device)
+        save_all(net, statistics, tag)
 
     print('Finished Training')
+    # already saved each epoch; final save is just belt-and-suspenders
+    save_all(net, statistics, tag)
 
 
-    tag = f"image_inversion_{'learned_equivariant' if rotation else 'non_equivariant'}_{model}{'_thicker' if thicker else ''}_dataset_{dataset}{'_finetuned' if finetune else ''}"
-    torch.save(net.state_dict(), f"models/{tag}_model.pth")
-    with open(f"results/{tag}_statistics.json", "wt+") as f:
-        json.dump(statistics, f)    
+def save_all(net, statistics, tag):
+    """Persist statistics and model weights atomically (write-temp-then-rename),
+    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
+    stats_path = f"results/{tag}_statistics.json"
+    tmp_stats = stats_path + ".tmp"
+    with open(tmp_stats, "wt") as f:
+        json.dump(statistics, f)
+    os.replace(tmp_stats, stats_path)
+
+    model_path = f"models/{tag}_model.pth"
+    tmp_model = model_path + ".tmp"
+    torch.save(net.state_dict(), tmp_model)
+    os.replace(tmp_model, model_path)
 
 
 def update_statistics(net, criterion, statistics, trainloader, testloader, device):
@@ -111,31 +135,41 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
 
         running_train_loss += criterion(output, labels).item()
     statistics["train_loss"].append(running_train_loss / len(trainloader))
-    running_test_loss = 0.0
-    running_equivariant_error = {k: [UnifiedEquivarianceTracker(device) for _ in range(3)] for k in layers.keys()}
+
+    # per-angle test loss (0 = unrotated). Inversion is EQUIVARIANT, so the target
+    # for a rotated input is the inverted rotated input: 1 - rot90(input).
+    running_test_loss = {0: 0.0, 90: 0.0, 180: 0.0, 270: 0.0}
+    # per-layer, PER-ANGLE equivariance tracker (kept separate, not averaged)
+    running_equivariant = {k: {a: EquivarianceTracker(device) for a in ANGLES}
+                           for k in layers.keys()}
     with torch.inference_mode():
         for data in testloader:
-            inputs, labels = data
+            inputs, _ = data
             inputs = inputs.to(device)
-            labels = 1.0 - inputs
 
+            # unrotated prediction + activations (equivariance reference)
             output, layers = net(inputs)
+            running_test_loss[0] += criterion(output, 1.0 - inputs).item()
 
-            running_test_loss += criterion(output, labels).item()
+            for angle in ANGLES:
+                k = angle // 90
+                inputs_rot = torch.rot90(inputs, k, dims=(-2, -1))
+                target_rot = 1.0 - inputs_rot
+                output_rot, layers_rot = net(inputs_rot)   # one forward, reused for loss + equivariance
 
-            inputs_rot90 = torch.rot90(inputs, 1, dims=(-2, -1))
-            inputs_rot180 = torch.rot90(inputs, 2, dims=(-2, -1))
-            inputs_rot270 = torch.rot90(inputs, 3, dims=(-2, -1))
+                running_test_loss[angle] += criterion(output_rot, target_rot).item()
 
-            *_, layers_rot90 = net(inputs_rot90)
-            *_, layers_rot180 = net(inputs_rot180)
-            *_, layers_rot270 = net(inputs_rot270)
+                for key in layers.keys():
+                    running_equivariant[key][angle].update(layers[key], layers_rot[key])
 
-            for key in layers.keys():
-                for idx, layer in enumerate([layers_rot90, layers_rot180, layers_rot270]):
-                    running_equivariant_error[key][idx].update(layers[key], layer[key])
-    statistics["test_loss"].append(running_test_loss / len(testloader))
-    statistics["equivariant_loss"].append({k: np.mean([x.compute() for x in v]) for k,v in running_equivariant_error.items()})
+    n_test = len(testloader)
+    statistics["test_loss"].append({angle: v / n_test for angle, v in running_test_loss.items()})
+    # store the full tracker stats (z, p, floor_std, ...) per layer, per angle
+    statistics["equivariant_loss"].append({
+        key: {angle: running_equivariant[key][angle].compute_stats() for angle in ANGLES}
+        for key in running_equivariant
+    })
+
 
 if __name__ == "__main__":
     args = ArgumentParser()
@@ -145,8 +179,8 @@ if __name__ == "__main__":
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
     args.add_argument("--finetune", help="The model to load for extra finetuning", type=Path)
     args = args.parse_args()
-    
+
     if args.model == "naive" and args.thicker:
         raise Exception("Can't make a thicker naive model.")
-    
+
     main(args.model, args.dataset, args.rotation, args.thicker, args.finetune)

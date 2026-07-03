@@ -1,182 +1,173 @@
-import numpy as np
 import torch
 class Random90Rotation:
     def __call__(self, img):
         k = torch.randint(0, 4, (1,)).item()
         return torch.rot90(img, k, dims=(-2, -1))
-    
-def linear_renyi2_nmi(L_base, L_transformed):
-    """
-    Computes Centered Linear Rényi 2 Normalized Mutual Information normalized by Joint Entropy
-    across a full dataset simultaneously. 
-    
-    L_base: Full dataset activations for normal input. Shape: (N, Dimensions) or (N, C, H, W)
-    L_transformed: Full dataset activations for transformed input. Shape: (N, Dimensions) or (N, C, H, W)
-    """
-    # 1. Ensure inputs are float32/64 tensors and match device
-    device = L_base.device
-    
-    # 2. Flatten spatial dimensions automatically if handling grids (Fluids, Images)
-    if L_base.dim() > 2:
-        L_base = L_base.flatten(start_dim=1)
-        L_transformed = L_transformed.flatten(start_dim=1)
-        
-    N = L_base.size(0)
-    
-    # 3. Force Global Dataset Mean Centering
-    # This completely strips out background bias and global layer offsets
-    A_centered = L_base - torch.mean(L_base, dim=0, keepdim=True)
-    B_centered = L_transformed - torch.mean(L_transformed, dim=0, keepdim=True)
 
-    # 4. Compute Full Global Linear Gram Matrices (N x N)
-    K_x = torch.matmul(A_centered, A_centered.T)
-    K_y = torch.matmul(B_centered, B_centered.T)
+class EquivarianceTracker:
 
-    # 5. Extract Full Global Trace Denominators
-    tr_kx = torch.trace(K_x)
-    tr_ky = torch.trace(K_y)
-    
-    # Guard against completely dead or unvarying layers
-    if tr_kx == 0 or tr_ky == 0:
-        return 0.0
-
-    # 6. Normalize Gram Matrices to form proxy probability densities
-    A_norm = K_x / tr_kx
-    B_norm = K_y / tr_ky
-
-    # 7. Compute Global Dataset Traces 
-    # Using element-wise multiplication sum runs in O(N^2) instead of O(N^3)
-    global_tr_A2 = torch.sum(A_norm * A_norm)
-    global_tr_B2 = torch.sum(B_norm * B_norm)
-    global_tr_AB = torch.sum(A_norm * B_norm)
-
-    # 8. Compute Marginal Linear Entropies
-    # Small 1e-12 epsilon keeps logs stable
-    H2_A = -torch.log2(global_tr_A2 + 1e-12)
-    H2_B = -torch.log2(global_tr_B2 + 1e-12)
-    
-    if H2_A <= 0 or H2_B <= 0:
-        return 0.0
-
-    # 9. Calculate Absolute Shared Bits
-    mi_absolute = torch.log2(global_tr_AB / (global_tr_A2 * global_tr_B2) + 1e-12)
-    mi_absolute = torch.clamp(mi_absolute, min=0.0)
-
-    # 10. Symmetric Uncertainty Normalization
-    symmetric_mi = (2.0 * mi_absolute) / (H2_A + H2_B)
-    
-    # Strict 0.0 to 1.0 bounding guard clip
-    return torch.clamp(symmetric_mi, min=0.0, max=1.0).item()
-
-
-class UnifiedEquivarianceTracker:
-    def __init__(self, device="cpu"):
-        """
-        A unified, hyperparameter-free metric for tracking learned equivariance.
-        Uses Centered Linear Rényi 2 Mutual Information normalized by Joint Entropy.
-        """
+    def __init__(self, device=None, store_device="cpu", dtype=torch.float32,
+                 sigma_x: float = None, sigma_y: float = None,
+                 max_samples: int = None, n_shuffles: int = 200, seed: int = 0,
+                 block_size: int = 1024):
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
+        self.store_device = torch.device(store_device)
+        self.dtype = dtype
+        self.sigma_x = sigma_x            # fixed bandwidth if given; else per-call median
+        self.sigma_y = sigma_y
+        self.max_samples = max_samples    # None (default) -> use ALL buffered samples
+        self.n_shuffles = n_shuffles
+        self.seed = seed
+        self.block_size = block_size      # tiled compute; memory O(block_size * N)
         self.reset()
 
     def reset(self):
-        """Resets the accumulated mini-batch statistics."""
+        self.all_x = []
+        self.all_y = []
         self.total_samples = 0
-        self.sum_tr_A2 = 0.0
-        self.sum_tr_B2 = 0.0
-        self.sum_tr_AB = 0.0
 
     @torch.no_grad()
-    def update(self, L_base, L_transformed):
-        """
-        Accumulates cross-batch statistics.
-        L_base: Activations from the un-transformed input (Batch_Size, Dimensions)
-        L_transformed: Activations from the transformed input (Batch_Size, Dimensions)
-        """
-        L_base = L_base.to(self.device, dtype=torch.float32)
-        L_transformed = L_transformed.to(self.device, dtype=torch.float32)
-        
-        # Flatten spatial structures if treating grids natively (e.g., Fluids/Pixels)
-        if L_base.dim() > 2:
-            L_base = L_base.flatten(start_dim=1)
-            L_transformed = L_transformed.flatten(start_dim=1)
-            
-        batch_size = L_base.size(0)
+    def update(self, X: torch.Tensor, Y: torch.Tensor):
+        X_flat = X.detach().flatten(start_dim=1).to(self.store_device, self.dtype)
+        Y_flat = Y.detach().flatten(start_dim=1).to(self.store_device, self.dtype)
+        self.all_x.append(X_flat)
+        self.all_y.append(Y_flat)
+        self.total_samples += X_flat.size(0)
 
-        # 1. Force Batch Centering (Essential for hyperparameter-free linear representations)
-        A_centered = L_base - torch.mean(L_base, dim=0, keepdim=True)
-        B_centered = L_transformed - torch.mean(L_transformed, dim=0, keepdim=True)
+    def _gram_norm(self, full, sigma):
+        """Trace-normalized RBF Gram on self.device. Returns (A, sigma) with tr(A)=1."""
+        d2 = torch.cdist(full, full, p=2) ** 2
+        if sigma is None:
+            n = full.size(0)
+            mask = ~torch.eye(n, dtype=torch.bool, device=full.device)
+            off = d2[mask]
+            off = off[off > 0]
+            sigma = torch.sqrt(0.5 * off.median() + 1e-8)
+        else:
+            sigma = torch.as_tensor(sigma, device=full.device, dtype=full.dtype)
+        K = torch.exp(-d2 / (2.0 * sigma ** 2))
+        return K / torch.trace(K), sigma               # normalize by ACTUAL trace
 
-        # 2. Compute Linear Gram Matrices
-        K_x = torch.matmul(A_centered, A_centered.T)
-        K_y = torch.matmul(B_centered, B_centered.T)
+    @staticmethod
+    def _S2(A):
+        return -torch.log2((A * A).sum() + 1e-12)
 
-        # 3. Trace Normalization
-        tr_kx = torch.trace(K_x)
-        tr_ky = torch.trace(K_y)
-        
-        if tr_kx == 0 or tr_ky == 0:
-            return  # Guard against completely dead layers
+    def _mi(self, A_x, A_y):
+        Had = A_x * A_y
+        A_xy = Had / torch.trace(Had)                   # Hadamard joint, diagonal-sum norm
+        return self._S2(A_x) + self._S2(A_y) - self._S2(A_xy)
 
-        A_norm = K_x / tr_kx
-        B_norm = K_y / tr_ky
+    def _resolve_sigma(self, data, sigma):
+        """Bandwidth for the tiled path: use fixed if given, else median from a
+        capped random subsample (full pairwise median would need an N×N matrix)."""
+        if sigma is not None:
+            return torch.as_tensor(sigma, device=data.device, dtype=data.dtype)
+        m = min(2048, data.size(0))
+        g = torch.Generator(device="cpu").manual_seed(self.seed + 7)
+        idx = torch.randperm(data.size(0), generator=g)[:m].to(data.device)
+        sub = data[idx]
+        d2 = torch.cdist(sub, sub, p=2) ** 2
+        off = d2[~torch.eye(m, dtype=torch.bool, device=data.device)]
+        return torch.sqrt(0.5 * off[off > 0].median() + 1e-8)
 
-        # 4. Compute O(N^2) Trace Metrics via Element-wise products
-        batch_tr_A2 = torch.sum(A_norm * A_norm).item()
-        batch_tr_B2 = torch.sum(B_norm * B_norm).item()
-        batch_tr_AB = torch.sum(A_norm * B_norm).item()
+    def _tiled_sums(self, X, Y, sigma_x, sigma_y):
+        """Accumulate Sx=||Kx||_F^2, Sy=||Ky||_F^2, Sxy=sum Kx^2 Ky^2 over row
+        blocks, materializing only block×N at a time. K_ii=1 => trace(K)=N."""
+        N = X.size(0)
+        block = self.block_size or N
+        Sx = Sy = Sxy = torch.zeros((), device=self.device, dtype=torch.float64)
+        for s in range(0, N, block):
+            xi, yi = X[s:s + block], Y[s:s + block]
+            Kx = torch.exp(-torch.cdist(xi, X, p=2) ** 2 / (2.0 * sigma_x ** 2))
+            Ky = torch.exp(-torch.cdist(yi, Y, p=2) ** 2 / (2.0 * sigma_y ** 2))
+            kx2, ky2 = (Kx * Kx).double(), (Ky * Ky).double()
+            Sx = Sx + kx2.sum()
+            Sy = Sy + ky2.sum()
+            Sxy = Sxy + (kx2 * ky2).sum()
+        return Sx, Sy, Sxy
 
-        # 5. Accumulate weighted statistics to support uneven final loader batches
-        self.sum_tr_A2 += batch_tr_A2 * batch_size
-        self.sum_tr_B2 += batch_tr_B2 * batch_size
-        self.sum_tr_AB += batch_tr_AB * batch_size
-        self.total_samples += batch_size
+    def _tiled_mi_parts(self, X, Y, sigma_x, sigma_y):
+        """Returns (MI, H_X, H_Y) via tiled sums.  MI = log2(Sxy N^2/(Sx Sy))."""
+        N = X.size(0)
+        Sx, Sy, Sxy = self._tiled_sums(X, Y, sigma_x, sigma_y)
+        log2N = torch.log2(torch.tensor(float(N), dtype=torch.float64, device=self.device))
+        H_X = -torch.log2(Sx + 1e-12) + 2 * log2N
+        H_Y = -torch.log2(Sy + 1e-12) + 2 * log2N
+        MI = torch.log2(Sxy + 1e-12) + 2 * log2N - torch.log2(Sx + 1e-12) - torch.log2(Sy + 1e-12)
+        return MI, H_X, H_Y
 
-    def compute(self):
-        """
-        Computes the Symmetric Uncertainty ratio.
-        Returns a value strictly bounded between 0.0 and 1.0.
+    @torch.no_grad()
+    def compute_stats(self, reset_after: bool = False):
+        """Noise-floor statistics for the raw matrix-based Rényi-2 MI.
+
+        Returns a dict:
+          raw_mi        : observed I(X;Y) in bits
+          floor_mean    : mean MI over shuffled (independent) pairs  (bias floor)
+          floor_std     : std of the shuffle distribution           (noise scale)
+          debiased_mi   : raw_mi - floor_mean  (bits above the floor)
+          z             : (raw_mi - floor_mean) / floor_std
+                          -> signal in units of noise std; comparable across
+                             layers WITHOUT entropy normalization, since it is
+                             scaled by each layer's own noise.
+          p             : permutation p-value = (1 + #{shuffle >= raw}) / (S+1)
+                          -> smallest resolvable p is 1/(n_shuffles+1); raise
+                             n_shuffles for finer resolution / tighter floor_std.
+          H_X, H_Y      : marginal Rényi-2 entropies (for reference)
         """
         if self.total_samples == 0:
-            return 0.0
+            raise ValueError("No data accumulated yet. Call update() first.")
 
-        # Extract global dataset traces from accumulators
-        global_tr_A2 = self.sum_tr_A2 / self.total_samples
-        global_tr_B2 = self.sum_tr_B2 / self.total_samples
-        global_tr_AB = self.sum_tr_AB / self.total_samples
+        X = torch.cat(self.all_x, dim=0).to(self.device)
+        Y = torch.cat(self.all_y, dim=0).to(self.device)
+        n = X.size(0)
+        if self.max_samples is not None and n > self.max_samples:
+            g = torch.Generator(device="cpu").manual_seed(self.seed)
+            idx = torch.randperm(n, generator=g)[:self.max_samples].to(self.device)
+            X, Y = X[idx], Y[idx]
+            n = self.max_samples
 
-        # 1. Compute marginal linear entropies
-        H2_A = -torch.log2(torch.tensor(global_tr_A2 + 1e-12)).item()
-        H2_B = -torch.log2(torch.tensor(global_tr_B2 + 1e-12)).item()
-        
-        if H2_A <= 0 or H2_B <= 0:
-            return 0.0
+        if self.block_size is not None:
+            # tiled path: no N×N Gram in memory; permuting Y's rows == Gram(Y[perm])
+            sx = self._resolve_sigma(X, self.sigma_x)
+            sy = self._resolve_sigma(Y, self.sigma_y)
+            raw_t, H_X, H_Y = self._tiled_mi_parts(X, Y, sx, sy)
+            raw = raw_t
+            g = torch.Generator(device="cpu").manual_seed(self.seed + 1)
+            null = torch.empty(self.n_shuffles, device=self.device, dtype=torch.float64)
+            for s in range(self.n_shuffles):
+                perm = torch.randperm(n, generator=g).to(self.device)
+                mi_s, _, _ = self._tiled_mi_parts(X, Y[perm], sx, sy)
+                null[s] = mi_s
+            raw = raw.to(torch.float64)
+        else:
+            A_x, _ = self._gram_norm(X, self.sigma_x)
+            A_y, _ = self._gram_norm(Y, self.sigma_y)
+            H_X, H_Y = self._S2(A_x), self._S2(A_y)
+            raw = self._mi(A_x, A_y)
+            g = torch.Generator(device="cpu").manual_seed(self.seed + 1)
+            null = torch.empty(self.n_shuffles, device=self.device)
+            for s in range(self.n_shuffles):
+                perm = torch.randperm(n, generator=g).to(self.device)
+                null[s] = self._mi(A_x, A_y[perm][:, perm])
 
-        # 2. Compute absolute shared bits
-        mi_absolute = torch.log2(torch.tensor(global_tr_AB / (global_tr_A2 * global_tr_B2) + 1e-12)).item()
-        mi_absolute = max(0.0, mi_absolute)
+        floor_mean = null.mean()
+        floor_std = null.std(unbiased=True)
+        z = (raw - floor_mean) / (floor_std + 1e-12)
+        p = (1.0 + (null >= raw).sum().float()) / (self.n_shuffles + 1)
 
-        # 3. Apply Symmetric Uncertainty Normalization
-        symmetric_mi = (2.0 * mi_absolute) / (H2_A + H2_B)
-        
-        # Safe numeric bounding guard clip
-        return min(1.0, max(0.0, symmetric_mi))
-    
-if __name__ == "__main__":
-    from torch.utils.data import DataLoader, TensorDataset
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Tracking on device: {device}\n" + "="*40)
-    
-    # Generate mock network representations (1000 items, with explicit global mean shifts)
-    # Adding a massive arbitrary bias (+15.0) to simulate raw uncentered activations
-    X_data = torch.randn(1000, 64) + 15.0  
-    Y_data = X_data[:, :8] @ torch.randn(8, 128) + torch.randn(1000, 128) * 0.1 + 15.0
-    
-    dataset = TensorDataset(X_data, Y_data)
-    dataloader = DataLoader(dataset, batch_size=256, shuffle=False)
-
-    print(f"Unbatched:  {linear_renyi2_nmi(X_data, Y_data)}")
-    metric = UnifiedEquivarianceTracker(device)
-    for x,y in dataloader:
-        metric.update(x, y)
-    print(f"Batched:    {metric.compute()}")
+        out = {
+            "raw_mi": raw.item(),
+            "floor_mean": floor_mean.item(),
+            "floor_std": floor_std.item(),
+            "debiased_mi": (raw - floor_mean).item(),
+            "z": z.item(),
+            "p": p.item(),
+            "H_X": H_X.item(),
+            "H_Y": H_Y.item(),
+            "n_samples": n,
+        }
+        if reset_after:
+            self.reset()
+        return out
