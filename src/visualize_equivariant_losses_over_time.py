@@ -4,6 +4,20 @@ from argparse import ArgumentParser
 import matplotlib.pyplot as plt
 import numpy as np
 
+
+def mean_z_per_layer(epoch_dict):
+    """
+    epoch_dict maps layer -> {angle: compute_stats_dict}.
+    Return a list of mean z-scores (averaged over angles) per layer,
+    in the layer order given by the dict keys.
+    """
+    means = []
+    for layer, per_angle in epoch_dict.items():
+        z_vals = [stats["z"] for stats in per_angle.values()]
+        means.append(float(np.mean(z_vals)))
+    return means
+
+
 def main(statistics_pth: Path):
     with statistics_pth.open() as f:
         data = json.load(f)
@@ -18,15 +32,15 @@ def main(statistics_pth: Path):
     ax.set_xticks(range(len(layer_names)))
     ax.set_xticklabels(layer_names, rotation=45, ha='right')
     ax.set_ylim(bottom=0, top=400)
-    ax.set_ylabel("Renyi2 NMI (Higher is More Equivariant)")
+    ax.set_ylabel("Renyi2 MI z-score (mean over angles; higher = more dependent)")
 
     n_epochs = len(equivariant_loss)
     cmap = plt.get_cmap('gnuplot')
     colors = [cmap(i) for i in np.linspace(0, 1, n_epochs)]
 
-    # Plot equivariant CKA for each epoch
+    # Plot mean-over-angle z-score per layer for each epoch
     for i in range(n_epochs):
-        values = list(equivariant_loss[i].values())
+        values = mean_z_per_layer(equivariant_loss[i])
         layers = range(len(values))
         ax.plot(layers, values, marker='o', c=colors[i], alpha=0.7)
 
@@ -42,6 +56,7 @@ def main(statistics_pth: Path):
 
     Path(f"pdfs/{statistics_pth.stem}").mkdir(exist_ok=True, parents=True)
     plt.savefig(f"pdfs/{statistics_pth.stem}/equivariant_loss_{statistics_pth.stem}.pdf")
+
 
 if __name__ == "__main__":
     args = ArgumentParser()
