@@ -31,7 +31,7 @@ def main(statistics_pth: Path):
     ax.set_xlabel("Layer")
     ax.set_xticks(range(len(layer_names)))
     ax.set_xticklabels(layer_names, rotation=45, ha='right')
-    ax.set_ylim(bottom=0, top=400)
+    ax.set_ylim(bottom=0, top=1000)
     ax.set_ylabel("Renyi2 MI z-score (mean over angles; higher = more dependent)")
 
     n_epochs = len(equivariant_loss)
