@@ -5,16 +5,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def mean_z_per_layer(epoch_dict):
+def mean_cka_per_layer(epoch_dict):
     """
     epoch_dict maps layer -> {angle: compute_stats_dict}.
-    Return a list of mean z-scores (averaged over angles) per layer,
+    Return a list of mean cka-scores (averaged over angles) per layer,
     in the layer order given by the dict keys.
     """
     means = []
     for layer, per_angle in epoch_dict.items():
-        z_vals = [stats["z"] for stats in per_angle.values()]
-        means.append(float(np.mean(z_vals)))
+        cka_vals = [stats["cka"] for stats in per_angle.values()]
+        means.append(float(np.mean(cka_vals)))
     return means
 
 
@@ -31,16 +31,16 @@ def main(statistics_pth: Path):
     ax.set_xlabel("Layer")
     ax.set_xticks(range(len(layer_names)))
     ax.set_xticklabels(layer_names, rotation=45, ha='right')
-    ax.set_ylim(bottom=0, top=1000)
-    ax.set_ylabel("Renyi2 MI z-score (mean over angles; higher = more dependent)")
+    ax.set_ylim(bottom=0, top=1)
+    ax.set_ylabel("Renyi2 MI CKA (mean over angles; higher = more dependent)")
 
     n_epochs = len(equivariant_loss)
     cmap = plt.get_cmap('gnuplot')
     colors = [cmap(i) for i in np.linspace(0, 1, n_epochs)]
 
-    # Plot mean-over-angle z-score per layer for each epoch
+    # Plot mean-over-angle cka-score per layer for each epoch
     for i in range(n_epochs):
-        values = mean_z_per_layer(equivariant_loss[i])
+        values = mean_cka_per_layer(equivariant_loss[i])
         layers = range(len(values))
         ax.plot(layers, values, marker='o', c=colors[i], alpha=0.7)
 

@@ -5,169 +5,101 @@ class Random90Rotation:
         return torch.rot90(img, k, dims=(-2, -1))
 
 class EquivarianceTracker:
-
-    def __init__(self, device=None, store_device="cpu", dtype=torch.float32,
-                 sigma_x: float = None, sigma_y: float = None,
-                 max_samples: int = None, n_shuffles: int = 200, seed: int = 0,
-                 block_size: int = 1024):
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = torch.device(device)
-        self.store_device = torch.device(store_device)
-        self.dtype = dtype
-        self.sigma_x = sigma_x            # fixed bandwidth if given; else per-call median
-        self.sigma_y = sigma_y
-        self.max_samples = max_samples    # None (default) -> use ALL buffered samples
-        self.n_shuffles = n_shuffles
-        self.seed = seed
-        self.block_size = block_size      # tiled compute; memory O(block_size * N)
-        self.reset()
-
-    def reset(self):
-        self.all_x = []
-        self.all_y = []
-        self.total_samples = 0
-
-    @torch.no_grad()
-    def update(self, X: torch.Tensor, Y: torch.Tensor):
-        X_flat = X.detach().flatten(start_dim=1).to(self.store_device, self.dtype)
-        Y_flat = Y.detach().flatten(start_dim=1).to(self.store_device, self.dtype)
-        self.all_x.append(X_flat)
-        self.all_y.append(Y_flat)
-        self.total_samples += X_flat.size(0)
-
-    def _gram_norm(self, full, sigma):
-        """Trace-normalized RBF Gram on self.device. Returns (A, sigma) with tr(A)=1."""
-        d2 = torch.cdist(full, full, p=2) ** 2
-        if sigma is None:
-            n = full.size(0)
-            mask = ~torch.eye(n, dtype=torch.bool, device=full.device)
-            off = d2[mask]
-            off = off[off > 0]
-            sigma = torch.sqrt(0.5 * off.median() + 1e-8)
-        else:
-            sigma = torch.as_tensor(sigma, device=full.device, dtype=full.dtype)
-        K = torch.exp(-d2 / (2.0 * sigma ** 2))
-        return K / torch.trace(K), sigma               # normalize by ACTUAL trace
-
-    @staticmethod
-    def _S2(A):
-        return -torch.log2((A * A).sum() + 1e-12)
-
-    def _mi(self, A_x, A_y):
-        Had = A_x * A_y
-        A_xy = Had / torch.trace(Had)                   # Hadamard joint, diagonal-sum norm
-        return self._S2(A_x) + self._S2(A_y) - self._S2(A_xy)
-
-    def _resolve_sigma(self, data, sigma):
-        """Bandwidth for the tiled path: use fixed if given, else median from a
-        capped random subsample (full pairwise median would need an N×N matrix)."""
-        if sigma is not None:
-            return torch.as_tensor(sigma, device=data.device, dtype=data.dtype)
-        m = min(2048, data.size(0))
-        g = torch.Generator(device="cpu").manual_seed(self.seed + 7)
-        idx = torch.randperm(data.size(0), generator=g)[:m].to(data.device)
-        sub = data[idx]
-        d2 = torch.cdist(sub, sub, p=2) ** 2
-        off = d2[~torch.eye(m, dtype=torch.bool, device=data.device)]
-        return torch.sqrt(0.5 * off[off > 0].median() + 1e-8)
-
-    def _tiled_sums(self, X, Y, sigma_x, sigma_y):
-        """Accumulate Sx=||Kx||_F^2, Sy=||Ky||_F^2, Sxy=sum Kx^2 Ky^2 over row
-        blocks, materializing only block×N at a time. K_ii=1 => trace(K)=N."""
-        N = X.size(0)
-        block = self.block_size or N
-        Sx = Sy = Sxy = torch.zeros((), device=self.device, dtype=torch.float64)
-        for s in range(0, N, block):
-            xi, yi = X[s:s + block], Y[s:s + block]
-            Kx = torch.exp(-torch.cdist(xi, X, p=2) ** 2 / (2.0 * sigma_x ** 2))
-            Ky = torch.exp(-torch.cdist(yi, Y, p=2) ** 2 / (2.0 * sigma_y ** 2))
-            kx2, ky2 = (Kx * Kx).double(), (Ky * Ky).double()
-            Sx = Sx + kx2.sum()
-            Sy = Sy + ky2.sum()
-            Sxy = Sxy + (kx2 * ky2).sum()
-        return Sx, Sy, Sxy
-
-    def _tiled_mi_parts(self, X, Y, sigma_x, sigma_y):
-        """Returns (MI, H_X, H_Y) via tiled sums.  MI = log2(Sxy N^2/(Sx Sy))."""
-        N = X.size(0)
-        Sx, Sy, Sxy = self._tiled_sums(X, Y, sigma_x, sigma_y)
-        log2N = torch.log2(torch.tensor(float(N), dtype=torch.float64, device=self.device))
-        H_X = -torch.log2(Sx + 1e-12) + 2 * log2N
-        H_Y = -torch.log2(Sy + 1e-12) + 2 * log2N
-        MI = torch.log2(Sxy + 1e-12) + 2 * log2N - torch.log2(Sx + 1e-12) - torch.log2(Sy + 1e-12)
-        return MI, H_X, H_Y
-
-    @torch.no_grad()
-    def compute_stats(self, reset_after: bool = False):
-        """Noise-floor statistics for the raw matrix-based Rényi-2 MI.
-
-        Returns a dict:
-          raw_mi        : observed I(X;Y) in bits
-          floor_mean    : mean MI over shuffled (independent) pairs  (bias floor)
-          floor_std     : std of the shuffle distribution           (noise scale)
-          debiased_mi   : raw_mi - floor_mean  (bits above the floor)
-          z             : (raw_mi - floor_mean) / floor_std
-                          -> signal in units of noise std; comparable across
-                             layers WITHOUT entropy normalization, since it is
-                             scaled by each layer's own noise.
-          p             : permutation p-value = (1 + #{shuffle >= raw}) / (S+1)
-                          -> smallest resolvable p is 1/(n_shuffles+1); raise
-                             n_shuffles for finer resolution / tighter floor_std.
-          H_X, H_Y      : marginal Rényi-2 entropies (for reference)
+    def __init__(self, device):
         """
-        if self.total_samples == 0:
-            raise ValueError("No data accumulated yet. Call update() first.")
+        Memory-free tracker matching your loop's exact signature.
+        Calculates sigma and unbiased HSIC on the fly per batch.
+        """
+        self.device = device
+        
+        # Accumulators for global dataset-wide averaging
+        self.hsic_num = 0.0
+        self.hsic_den_X = 0.0
+        self.hsic_den_Y = 0.0
+        self.total_batches = 0
+        self.last_sigma = 0.0 # Stored for monitoring/logs
 
-        X = torch.cat(self.all_x, dim=0).to(self.device)
-        Y = torch.cat(self.all_y, dim=0).to(self.device)
-        n = X.size(0)
-        if self.max_samples is not None and n > self.max_samples:
-            g = torch.Generator(device="cpu").manual_seed(self.seed)
-            idx = torch.randperm(n, generator=g)[:self.max_samples].to(self.device)
-            X, Y = X[idx], Y[idx]
-            n = self.max_samples
+    def _unbiased_hsic(self, K, L):
+        """
+        Computes the mathematically unbiased HSIC estimator for a batch.
+        Removes the diagonal bias so scores can be averaged over a dataset.
+        """
+        n = K.size(0)
+        if n < 4:
+            raise ValueError("Batch size must be >= 4 to compute unbiased HSIC.")
+            
+        # Set diagonal entries to zero
+        K.fill_diagonal_(0.0)
+        L.fill_diagonal_(0.0)
+        
+        # Unbiased calculation components
+        kl_trace = torch.trace(K @ L)
+        k_sum = torch.sum(K)
+        l_sum = torch.sum(L)
+        
+        row_sum_k = torch.sum(K, dim=1)
+        row_sum_l = torch.sum(L, dim=1)
+        row_vectors_dot = torch.dot(row_sum_k, row_sum_l)
+        
+        # Unbiased HSIC equation
+        hsic = (kl_trace + (k_sum * l_sum) / ((n - 1) * (n - 2)) 
+                - 2.0 * row_vectors_dot / (n - 2)) / (n * (n - 3))
+        return hsic
 
-        if self.block_size is not None:
-            # tiled path: no N×N Gram in memory; permuting Y's rows == Gram(Y[perm])
-            sx = self._resolve_sigma(X, self.sigma_x)
-            sy = self._resolve_sigma(Y, self.sigma_y)
-            raw_t, H_X, H_Y = self._tiled_mi_parts(X, Y, sx, sy)
-            raw = raw_t
-            g = torch.Generator(device="cpu").manual_seed(self.seed + 1)
-            null = torch.empty(self.n_shuffles, device=self.device, dtype=torch.float64)
-            for s in range(self.n_shuffles):
-                perm = torch.randperm(n, generator=g).to(self.device)
-                mi_s, _, _ = self._tiled_mi_parts(X, Y[perm], sx, sy)
-                null[s] = mi_s
-            raw = raw.to(torch.float64)
-        else:
-            A_x, _ = self._gram_norm(X, self.sigma_x)
-            A_y, _ = self._gram_norm(Y, self.sigma_y)
-            H_X, H_Y = self._S2(A_x), self._S2(A_y)
-            raw = self._mi(A_x, A_y)
-            g = torch.Generator(device="cpu").manual_seed(self.seed + 1)
-            null = torch.empty(self.n_shuffles, device=self.device)
-            for s in range(self.n_shuffles):
-                perm = torch.randperm(n, generator=g).to(self.device)
-                null[s] = self._mi(A_x, A_y[perm][:, perm])
+    def update(self, feat_clean, feat_rot):
+        """
+        Processes a mini-batch immediately and throws away the raw activations.
+        Matches signature: tracker.update(layers[key], layers_rot[key])
+        """
+        X = feat_clean.flatten(start_dim=1).detach()
+        Y = feat_rot.flatten(start_dim=1).detach()
+        
+        # 1. Compute batch-specific sigma using the pooled median trick
+        pooled = torch.cat([X, Y], dim=0)
+        pairwise_dists = torch.cdist(pooled, pooled, p=2)
+        
+        triu_idx = torch.triu_indices(row=pairwise_dists.size(0), col=pairwise_dists.size(1), offset=1, device=self.device)
+        valid_dists = pairwise_dists[triu_idx[0], triu_idx[1]]
+        
+        sigma = torch.median(valid_dists).item()
+        if sigma == 0:
+            sigma = 1e-6
+        self.last_sigma = sigma
 
-        floor_mean = null.mean()
-        floor_std = null.std(unbiased=True)
-        z = (raw - floor_mean) / (floor_std + 1e-12)
-        p = (1.0 + (null >= raw).sum().float()) / (self.n_shuffles + 1)
+        # 2. Compute the RBF Kernels for this batch
+        dist_X = torch.cdist(X, X, p=2)**2
+        dist_Y = torch.cdist(Y, Y, p=2)**2
+        
+        K = torch.exp(-dist_X / (2 * (sigma ** 2)))
+        L = torch.exp(-dist_Y / (2 * (sigma ** 2)))
+        
+        # 3. Compute unbiased components
+        num = self._unbiased_hsic(K.clone(), L.clone())
+        den_X = self._unbiased_hsic(K.clone(), K.clone())
+        den_Y = self._unbiased_hsic(L.clone(), L.clone())
+        
+        # 4. Accumulate scalar sums (Uses zero RAM)
+        self.hsic_num += num.item()
+        self.hsic_den_X += den_X.item()
+        self.hsic_den_Y += den_Y.item()
+        self.total_batches += 1
 
-        out = {
-            "raw_mi": raw.item(),
-            "floor_mean": floor_mean.item(),
-            "floor_std": floor_std.item(),
-            "debiased_mi": (raw - floor_mean).item(),
-            "z": z.item(),
-            "p": p.item(),
-            "H_X": H_X.item(),
-            "H_Y": H_Y.item(),
-            "n_samples": n,
+    def compute_stats(self):
+        """
+        Resolves the global unbiased CKA score at the end of the epoch loop.
+        Matches signature: tracker.compute_stats() -> returns dictionary
+        """
+        if self.total_batches == 0 or self.hsic_den_X <= 0 or self.hsic_den_Y <= 0:
+            # Safely handle Angle 0 or empty validation checks
+            return {"rbf_cka": 1.0, "calibrated_sigma": self.last_sigma}
+            
+        denominator = torch.sqrt(torch.tensor(self.hsic_den_X * self.hsic_den_Y))
+        cka_score = self.hsic_num / denominator.item()
+        
+        # Clamp bounds to handle minor floating-point fluctuations near perfect alignment
+        cka_score = max(0.0, min(1.0, cka_score))
+        
+        return {
+            "rbf_cka": cka_score,
+            "calibrated_sigma": self.last_sigma
         }
-        if reset_after:
-            self.reset()
-        return out

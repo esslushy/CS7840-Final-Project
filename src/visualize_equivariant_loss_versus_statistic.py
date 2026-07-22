@@ -5,16 +5,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def mean_z_per_layer(epoch_dict):
+def mean_cka_per_layer(epoch_dict):
     """
     epoch_dict maps layer -> {angle: compute_stats_dict}.
-    Return a list of mean z-scores (averaged over angles) per layer,
+    Return a list of mean cka-scores (averaged over angles) per layer,
     in the layer order given by the dict keys.
     """
     means = []
     for layer, per_angle in epoch_dict.items():
-        z_vals = [stats["z"] for stats in per_angle.values()]
-        means.append(float(np.mean(z_vals)))
+        cka_vals = [stats["cka"] for stats in per_angle.values()]
+        means.append(float(np.mean(cka_vals)))
     return means
 
 
@@ -45,19 +45,20 @@ def main(statistics_pth: Path, statistic: str):
     cmap = plt.get_cmap('gnuplot')
     colors = [cmap(i) for i in np.linspace(0, 1, num_epochs)]
 
-    # Precompute mean-over-angle z per epoch (list of per-layer lists)
-    z_per_epoch = [mean_z_per_layer(statistics["equivariant_loss"][jdx]) for jdx in range(num_epochs)]
+    # Precompute mean-over-angle cka per epoch (list of per-layer lists)
+    cka_per_epoch = [mean_cka_per_layer(statistics["equivariant_loss"][jdx]) for jdx in range(num_epochs)]
     # Reduce the comparison statistic to a scalar per epoch
     stat_per_epoch = [scalarize(statistics[statistic][jdx]) for jdx in range(num_epochs)]
 
     for idx, (layer_name, ax) in enumerate(zip(layer_names, axes)):
         ax.set_title(layer_name)
         ax.set_xlabel(statistic.replace("_", " ").title())
+        ax.set_ylim(bottom=0, top=1)
         if idx == 0:
-            ax.set_ylabel("Renyi2 MI z-score (mean over angles)")
+            ax.set_ylabel("Renyi2 MI CKA (mean over angles)")
 
         for jdx in range(num_epochs):
-            ax.plot(stat_per_epoch[jdx], z_per_epoch[jdx][idx],
+            ax.plot(stat_per_epoch[jdx], cka_per_epoch[jdx][idx],
                     marker='o', c=colors[jdx])
 
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1))
@@ -74,6 +75,6 @@ def main(statistics_pth: Path, statistic: str):
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("statistics_pth", help="The path where the statistics are stored.", type=Path)
-    args.add_argument("statistic", help="The statistic to compare equivariance z-score to.", type=str)
+    args.add_argument("statistic", help="The statistic to compare equivariance cka to.", type=str)
     args = args.parse_args()
     main(args.statistics_pth, args.statistic)

@@ -50,6 +50,7 @@ def main(statistics_pth: Path, statistic: str, field: str):
                 x = stat_value(statistics[statistic][ep], angle)
                 y = float(equivariant_loss[ep][layer][angle][field])
                 ax.plot(x, y, marker='o', c=colors[ep])
+            ax.set_ylim(bottom=0, top=1)
             if i == 0:
                 ax.set_title(layer, fontsize=9)
             if j == 0:
@@ -74,6 +75,6 @@ if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("statistics_pth", help="The path where the statistics are stored.", type=Path)
     args.add_argument("statistic", help="The statistic to compare the equivariance field to.", type=str)
-    args.add_argument("--field", help="Which compute_stats field to show (default z).", type=str, default="z")
+    args.add_argument("--field", help="Which compute_stats field to show (default cka).", type=str, default="cka")
     args = args.parse_args()
     main(args.statistics_pth, args.statistic, args.field)
