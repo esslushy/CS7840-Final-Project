@@ -75,6 +75,6 @@ if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("statistics_pth", help="The path where the statistics are stored.", type=Path)
     args.add_argument("statistic", help="The statistic to compare the equivariance field to.", type=str)
-    args.add_argument("--field", help="Which compute_stats field to show (default cka).", type=str, default="cka")
+    args.add_argument("--field", help="Which compute_stats field to show (default cka).", type=str, default="rbf_cka")
     args = args.parse_args()
     main(args.statistics_pth, args.statistic, args.field)

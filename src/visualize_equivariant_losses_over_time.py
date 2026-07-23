@@ -13,7 +13,7 @@ def mean_cka_per_layer(epoch_dict):
     """
     means = []
     for layer, per_angle in epoch_dict.items():
-        cka_vals = [stats["cka"] for stats in per_angle.values()]
+        cka_vals = [stats["rbf_cka"] for stats in per_angle.values()]
         means.append(float(np.mean(cka_vals)))
     return means
 
