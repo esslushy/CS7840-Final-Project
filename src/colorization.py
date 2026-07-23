@@ -33,7 +33,7 @@ def rgb_to_grayscale(rgb):
 # Training
 # ---------------------------------------------------------------------------
 
-def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path):
+def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path, resume: bool):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     transform_operations = [transforms.ToTensor()]
@@ -95,11 +95,17 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
            f"_{model}{'_thicker' if thicker else ''}_dataset_{dataset}"
            f"{'_finetuned' if finetune else ''}")
 
-    # baseline measurement before any training, then persist immediately
-    update_statistics(net, criterion, statistics, trainloader, testloader, device)
-    save_all(net, statistics, tag)
+    if resume:
+        net.load_state_dict(torch.load(f"models/{tag}_model.pth", weights_only=True))
+        with open(f"results/{tag}_statistics.json") as f:
+            statistics = json.load(f)
+        start = len(statistics["equivariant_loss"]) - 1
+    else:
+        update_statistics(net, criterion, statistics, trainloader, testloader, device)
+        save_all(net, statistics, tag)
+        start = 0
 
-    for epoch in range(NUM_EPOCHS):
+    for epoch in range(start, NUM_EPOCHS):
         net.train()
         running_loss = 0.0
         for data in trainloader:
@@ -195,9 +201,10 @@ if __name__ == "__main__":
     args.add_argument("--rotation", help="Whether to train with rotation applied", action="store_true")
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
     args.add_argument("--finetune", help="The model to load for extra finetuning", type=Path)
+    args.add_argument("--resume", help="Resume training", action="store_true")
     args = args.parse_args()
 
     if args.model == "naive" and args.thicker:
         raise Exception("Can't make a thicker naive model.")
 
-    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune)
+    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune, args.resume)
