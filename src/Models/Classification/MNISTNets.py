@@ -80,14 +80,20 @@ def posemb_sincos_2d(h, w, dim, temperature: int = 10000, dtype=torch.float32):
 class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, dim),
-        )
-    def forward(self, x):
-        return self.net(x)
+        self.norm = nn.LayerNorm(dim)
+        self.linear1 = nn.Linear(dim, hidden_dim)
+        self.linear2 = nn.Linear(hidden_dim, dim)
+
+    def forward(self, x, prefix=""):
+        acts = OrderedDict()
+        x = self.norm(x)
+        acts[f"{prefix}norm"] = x.detach()
+        x = self.linear1(x)
+        x = F.gelu(x)
+        acts[f"{prefix}gelu"] = x.detach()
+        x = self.linear2(x)
+        acts[f"{prefix}linear"] = x.detach()
+        return x, acts
 
 
 class Attention(nn.Module):
