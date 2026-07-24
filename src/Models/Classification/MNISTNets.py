@@ -101,15 +101,21 @@ class Attention(nn.Module):
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
         self.to_out = nn.Linear(inner_dim, dim, bias=False)
 
-    def forward(self, x):
+    def forward(self, x, prefix=""):
+        acts = OrderedDict()
         x = self.norm(x)
+        acts[f"{prefix}norm"] = x.detach()
         qkv = self.to_qkv(x).chunk(3, dim=-1)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv)
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
         attn = self.attend(dots)
+        acts[f"{prefix}attn"] = attn.detach()
         out = torch.matmul(attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
+        out = self.to_out(out)
+        acts[f"{prefix}out"] = out.detach()
+        return out, acts
+
 
 
 class Transformer(nn.Module):
@@ -126,8 +132,7 @@ class Transformer(nn.Module):
     def forward(self, x):
         acts = OrderedDict()
         for i, (attn, ff) in enumerate(self.layers):
-            attn_out, attn_acts = attn(x, prefix=f"block{i}.attn.")
-            acts.update(attn_acts)
+            attn_out = attn(x)
             x = attn_out + x
             acts[f"block{i}.attn.residual"] = x.detach()
             ff_out, ff_acts = ff(x, prefix=f"block{i}.ff.")
