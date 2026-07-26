@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def mean_cka_per_layer(epoch_dict):
+def mean_cka_per_layer(epoch_dict, stat):
     """
     epoch_dict maps layer -> {angle: compute_stats_dict}.
     Return a list of mean cka-scores (averaged over angles) per layer,
@@ -13,12 +13,12 @@ def mean_cka_per_layer(epoch_dict):
     """
     means = []
     for layer, per_angle in epoch_dict.items():
-        cka_vals = [stats["rbf_cka"] for stats in per_angle.values()]
+        cka_vals = [stats[stat] for stats in per_angle.values()]
         means.append(float(np.mean(cka_vals)))
     return means
 
 
-def main(statistics_pth: Path):
+def main(statistics_pth: Path, stat: str):
     with statistics_pth.open() as f:
         data = json.load(f)
 
@@ -32,7 +32,7 @@ def main(statistics_pth: Path):
     ax.set_xticks(range(len(layer_names)))
     ax.set_xticklabels(layer_names, rotation=45, ha='right')
     ax.set_ylim(bottom=0, top=1)
-    ax.set_ylabel("Renyi2 MI CKA (mean over angles; higher = more dependent)")
+    ax.set_ylabel(stat.replace("_", " "))
 
     n_epochs = len(equivariant_loss)
     cmap = plt.get_cmap('gnuplot')
@@ -40,7 +40,7 @@ def main(statistics_pth: Path):
 
     # Plot mean-over-angle cka-score per layer for each epoch
     for i in range(n_epochs):
-        values = mean_cka_per_layer(equivariant_loss[i])
+        values = mean_cka_per_layer(equivariant_loss[i], stat)
         layers = range(len(values))
         ax.plot(layers, values, marker='o', c=colors[i], alpha=0.7)
 
@@ -61,5 +61,6 @@ def main(statistics_pth: Path):
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("statistics_pth", help="The path where the statistics are stored.", type=Path)
+    args.add_argument("--stat", help="The statistic to show", choices=["rbf_cka", "linear_cka", "calibrated_sigma"])
     args = args.parse_args()
-    main(args.statistics_pth)
+    main(args.statistics_pth, args.stat)
