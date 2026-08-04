@@ -1,4 +1,3 @@
-import os
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -9,7 +8,7 @@ import json
 from argparse import ArgumentParser
 from pathlib import Path
 import sys
-from utils import Random90Rotation, EquivarianceTracker
+from utils import Random90Rotation, EquivarianceTracker, set_seed, save_all
 from print_digit import load_mnist_font_dataset
 
 if "mnist_font" in sys.argv:
@@ -24,7 +23,8 @@ BATCH_SIZE = 64
 ANGLES = (90, 180, 270) 
 
 
-def main(model: str, dataset: str, rotation: bool, holdout: str, thicker: bool, finetune: Path, resume: bool):
+def main(model: str, dataset: str, rotation: bool, holdout: str, thicker: bool, finetune: Path, resume: bool, seed: int):
+    set_seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if dataset == "cifar":
@@ -69,7 +69,8 @@ def main(model: str, dataset: str, rotation: bool, holdout: str, thicker: bool, 
 
     tag = (f"classification_{'learned_equivariant' if rotation else 'non_equivariant'}"
            f"_{model}{'_thicker' if thicker else ''}_dataset_{dataset}"
-           f"{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}")
+           f"{f'_holdout_{holdout}' if holdout else ''}{'_finetuned' if finetune else ''}"
+           f"_seed_{seed}")
 
     if holdout:
         random_rot = Random90Rotation(degrees=(0, 360))
@@ -115,21 +116,6 @@ def main(model: str, dataset: str, rotation: bool, holdout: str, thicker: bool, 
     print('Finished Training')
     # already saved each epoch; final save is just belt-and-suspenders
     save_all(net, statistics, tag)
-
-
-def save_all(net, statistics, tag):
-    """Persist statistics and model weights atomically (write-temp-then-rename),
-    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
-    stats_path = f"results/{tag}_statistics.json"
-    tmp_stats = stats_path + ".tmp"
-    with open(tmp_stats, "wt") as f:
-        json.dump(statistics, f)
-    os.replace(tmp_stats, stats_path)
-
-    model_path = f"models/{tag}_model.pth"
-    tmp_model = model_path + ".tmp"
-    torch.save(net.state_dict(), tmp_model)
-    os.replace(tmp_model, model_path)
 
 
 def load_cifar(rotation, holdout):
@@ -223,6 +209,7 @@ if __name__ == "__main__":
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
     args.add_argument("--finetune", help="The model to load for extra finetuning", type=Path)
     args.add_argument("--resume", help="Resume training", action="store_true")
+    args.add_argument("--seed", help="Random seed for reproducibility", type=int, default=0)
     args = args.parse_args()
 
     if args.holdout and not args.rotation:
@@ -231,4 +218,4 @@ if __name__ == "__main__":
     if args.model == "naive" and args.thicker:
         raise Exception("Can't make a thicker naive model.")
 
-    main(args.model, args.dataset, args.rotation, args.holdout, args.thicker, args.finetune, args.resume)
+    main(args.model, args.dataset, args.rotation, args.holdout, args.thicker, args.finetune, args.resume, args.seed)

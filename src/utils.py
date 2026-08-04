@@ -1,4 +1,82 @@
+import json
+import os
+import random
+import re
 import torch
+import numpy as np
+
+
+def save_all(net, statistics, tag):
+    """Persist statistics and model weights atomically (write-temp-then-rename),
+    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
+    stats_path = f"results/{tag}_statistics.json"
+    tmp_stats = stats_path + ".tmp"
+    with open(tmp_stats, "wt") as f:
+        json.dump(statistics, f)
+    os.replace(tmp_stats, stats_path)
+
+    model_path = f"models/{tag}_model.pth"
+    tmp_model = model_path + ".tmp"
+    torch.save(net.state_dict(), tmp_model)
+    os.replace(tmp_model, model_path)
+
+
+def so2_eval_angles(n):
+    """
+    Sample n evenly-spaced elements of SO(2) via the Lie algebra.
+
+    SO(2) has a single generator J = [[0, -1], [1, 0]].
+    The group elements are exp(t * J) = rotation by angle t.
+    We sample t_k = 2π * k / (n+1) for k = 1, ..., n, which gives n
+    uniformly spaced rotations excluding the identity (t=0).
+
+    Returns (radians_tensor, degree_labels) where degree_labels are integer
+    degrees used as JSON-friendly keys for the per-angle statistics.
+    """
+    ks = range(1, n + 1)
+    radians = torch.tensor([2 * np.pi * k / (n + 1) for k in ks])
+    degrees = [int(round(360.0 * k / (n + 1))) for k in ks]
+    return radians, degrees
+
+
+def rotate_2d(vecs, theta):
+    """Rotate 2D vectors by angle theta (radians). vecs: (..., 2)."""
+    c = torch.cos(theta)
+    s = torch.sin(theta)
+    x, y = vecs[..., 0], vecs[..., 1]
+    return torch.stack([c * x - s * y, s * x + c * y], dim=-1)
+
+
+def mean_cka_per_layer(epoch_dict, stat):
+    """
+    epoch_dict maps layer -> {angle: compute_stats_dict}.
+    Return a list of mean cka-scores (averaged over angles) per layer,
+    in the layer order given by the dict keys.
+    """
+    means = []
+    for layer, per_angle in epoch_dict.items():
+        cka_vals = [stats[stat] for stats in per_angle.values()]
+        means.append(float(np.mean(cka_vals)))
+    return means
+
+
+def set_seed(seed: int):
+    """Seed every RNG a training run touches (python, numpy, torch CPU/CUDA)."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def strip_seed_suffix(stem: str) -> str:
+    """Strip '_seed_<n>' from a statistics/model-file stem, e.g. for grouping multiple
+    seeded runs of the same experiment under one output name. The seed marker sits
+    before the trailing '_statistics'/'_model' suffix (tag = "..._seed_{n}", then
+    save_all() appends "_statistics"/"_model"), so it isn't always at the very end."""
+    return re.sub(r"_seed_\d+(?=$|_statistics$|_model$)", "", stem)
+
+
 class Random90Rotation:
     def __call__(self, img):
         k = torch.randint(0, 4, (1,)).item()

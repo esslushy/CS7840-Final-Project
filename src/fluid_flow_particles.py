@@ -5,7 +5,7 @@ import torch.optim as optim
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from utils import EquivarianceTracker
+from utils import EquivarianceTracker, set_seed, save_all, so2_eval_angles, rotate_2d
 from torch.utils.data import Dataset, DataLoader
 import os
 
@@ -17,44 +17,10 @@ GRAVITY = 5.0
 NUM_BUOYANT_STEPS = 5
 NUM_EVAL_ANGLES = 16
 
-def so2_eval_angles(n=NUM_EVAL_ANGLES):
-    """
-    Sample n evenly-spaced elements of SO(2) via the Lie algebra.
-
-    SO(2) has a single generator J = [[0, -1], [1, 0]].
-    We sample t_k = 2π * k / (n+1) for k = 1, ..., n, excluding identity.
-
-    Returns (radians_tensor, degree_labels) where degree_labels are integer
-    degrees used as JSON-friendly keys for the per-angle statistics.
-    """
-    ks = range(1, n + 1)
-    radians = torch.tensor([2 * np.pi * k / (n + 1) for k in ks])
-    degrees = [int(round(360.0 * k / (n + 1))) for k in ks]
-    return radians, degrees
-
 
 # ---------------------------------------------------------------------------
 # Rotation utilities for particle states
 # ---------------------------------------------------------------------------
-
-def rotate_2d(vecs, theta):
-    """
-    Rotate 2D vectors by angle theta.
-
-    Args:
-        vecs: (..., 2)
-        theta: scalar tensor
-
-    Returns:
-        rotated: (..., 2)
-    """
-    c = torch.cos(theta)
-    s = torch.sin(theta)
-    x, y = vecs[..., 0], vecs[..., 1]
-    new_x = c * x - s * y
-    new_y = s * x + c * y
-    return torch.stack([new_x, new_y], dim=-1)
-
 
 def rotate_isotropic_particles(particles, theta):
     """
@@ -296,7 +262,8 @@ class BuoyantParticleDataset(Dataset):
 # Training
 # ---------------------------------------------------------------------------
 
-def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path, resume: bool):
+def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path, resume: bool, seed: int):
+    set_seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     from Models.FluidFlowParticlesNets import PointNet, MLP, NaiveNet, SetTransformer
@@ -349,7 +316,7 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
 
     tag = (f"fluid_flow_particles_{'learned_equivariant' if rotation else 'non_equivariant'}"
            f"_{model}{'_thicker' if thicker else ''}_dataset_{dataset}"
-           f"{'_finetuned' if finetune else ''}")
+           f"{'_finetuned' if finetune else ''}_seed_{seed}")
 
     if resume:
         net.load_state_dict(torch.load(f"models/{tag}_model.pth", weights_only=True))
@@ -388,21 +355,6 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
     save_all(net, statistics, tag)
 
 
-def save_all(net, statistics, tag):
-    """Persist statistics and model weights atomically (write-temp-then-rename),
-    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
-    stats_path = f"results/{tag}_statistics.json"
-    tmp_stats = stats_path + ".tmp"
-    with open(tmp_stats, "wt") as f:
-        json.dump(statistics, f)
-    os.replace(tmp_stats, stats_path)
-
-    model_path = f"models/{tag}_model.pth"
-    tmp_model = model_path + ".tmp"
-    torch.save(net.state_dict(), tmp_model)
-    os.replace(tmp_model, model_path)
-
-
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------
@@ -419,7 +371,7 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
         running_train_loss += criterion(pred, state_tp1).item()
     statistics["train_loss"].append(running_train_loss / len(trainloader))
 
-    eval_angles, angle_labels = so2_eval_angles()
+    eval_angles, angle_labels = so2_eval_angles(NUM_EVAL_ANGLES)
 
     # per-angle test loss (0 = unrotated). The dynamics map is EQUIVARIANT, so the
     # target for a rotated input is the ROTATED next state.
@@ -468,9 +420,10 @@ if __name__ == "__main__":
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
     args.add_argument("--finetune", help="The model to load for extra finetuning", type=Path)
     args.add_argument("--resume", help="Resume training", action="store_true")
+    args.add_argument("--seed", help="Random seed for reproducibility", type=int, default=0)
     args = args.parse_args()
 
     if args.model == "naive" and args.thicker:
         raise Exception("Can't make a thicker naive model.")
 
-    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune, args.resume)
+    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune, args.resume, args.seed)

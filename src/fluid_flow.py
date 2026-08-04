@@ -6,7 +6,7 @@ import torch.optim as optim
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from utils import EquivarianceTracker
+from utils import EquivarianceTracker, set_seed, save_all
 from torch.utils.data import Dataset, DataLoader
 from Models.FluidFlowNets import UNet, CNN, ViT, NaiveNet
 import os
@@ -18,120 +18,71 @@ DT = 0.1
 GRAVITY = 5.0
 DIFFUSIVITY = 0.01
 NUM_BUOYANT_STEPS = 5  # accumulate multiple steps so gravity dominates
-NUM_EVAL_ANGLES = 16
 
-
-def so2_eval_angles(n=NUM_EVAL_ANGLES):
-    """
-    Sample n evenly-spaced elements of SO(2) via the Lie algebra.
-
-    SO(2) has a single generator J = [[0, -1], [1, 0]].
-    The group elements are exp(t * J) = rotation by angle t.
-    We sample t_k = 2π * k / (n+1) for k = 1, ..., n, which gives n
-    uniformly spaced rotations excluding the identity (t=0).
-
-    Returns (radians_tensor, degree_labels) where degree_labels are integer
-    degrees used as JSON-friendly keys for the per-angle statistics.
-    """
-    ks = range(1, n + 1)
-    radians = torch.tensor([2 * np.pi * k / (n + 1) for k in ks])
-    degrees = [int(round(360.0 * k / (n + 1))) for k in ks]
-    return radians, degrees
+ANGLES = (90, 180, 270)   # non-identity C4 rotations tracked for equivariance
 
 
 # ---------------------------------------------------------------------------
-# Continuous rotation utilities
+# Rotation utilities
 # ---------------------------------------------------------------------------
+#
+# Grid data is only ever rotated by multiples of 90 degrees, via torch.rot90.
+# That's an exact permutation of pixels (no resampling), unlike grid_sample at
+# an arbitrary angle, which blurs across pixels and confounds the equivariance
+# measurement with interpolation error. (The grid_sample calls inside
+# IsotropicFlowDataset._advect / BuoyantFlowDataset._step are unrelated --
+# they implement semi-Lagrangian advection, the physics itself, not a rotation.)
 
-def make_rotation_matrix(theta):
-    """2x2 rotation matrix for angle theta (radians)."""
-    c = torch.cos(theta)
-    s = torch.sin(theta)
-    return torch.stack([c, -s, s, c], dim=-1).view(*theta.shape, 2, 2)
-
-
-def rotate_grid(grid_size, theta, device):
-    """Build a sampling grid that rotates by theta around center."""
-    coords = torch.linspace(-1, 1, grid_size, device=device)
-    yy, xx = torch.meshgrid(coords, coords, indexing="ij")
-    xy = torch.stack([xx, yy], dim=-1)
-
-    R = make_rotation_matrix(theta)
-    R_inv = R.mT
-    xy_rot = (xy.view(-1, 2) @ R_inv.mT).view(grid_size, grid_size, 2)
-
-    return xy_rot.unsqueeze(0)
-
-
-def rotate_vector_field_continuous(field, theta):
+def rotate_vector_field(field, k):
     """
-    Rotate a 2D vector field by a continuous angle theta.
-
-    Spatially rotates the grid and rotates the vector components.
+    Rotate a batched 2D vector field by k * 90 degrees (k in {0, 1, 2, 3}).
+    Spatial rotation (exact) + vector component rotation.
 
     Args:
         field: (B, 2, H, W) vector field
-        theta: scalar tensor, angle in radians
 
     Returns:
         rotated: (B, 2, H, W)
     """
-    B, _, H, W = field.shape
-    device = field.device
-
-    grid = rotate_grid(H, theta, device).expand(B, -1, -1, -1)
-    rotated = Fn.grid_sample(
-        field, grid, mode='bilinear', padding_mode='zeros', align_corners=True
-    )
-
-    c = torch.cos(theta)
-    s = torch.sin(theta)
-    vx, vy = rotated[:, 0:1], rotated[:, 1:2]
-    new_vx = c * vx - s * vy
-    new_vy = s * vx + c * vy
-    return torch.cat([new_vx, new_vy], dim=1)
+    field_r = torch.rot90(field, k, dims=(-2, -1))
+    vx, vy = field_r[:, 0:1], field_r[:, 1:2]
+    c = [1, 0, -1, 0][k]
+    s = [0, 1, 0, -1][k]
+    return torch.cat([c * vx - s * vy, s * vx + c * vy], dim=1)
 
 
-def rotate_vector_field_single(field, theta):
+def rotate_vector_field_single(field, k):
     """Unbatched version: field is (2, H, W)."""
-    return rotate_vector_field_continuous(field.unsqueeze(0), theta).squeeze(0)
+    return rotate_vector_field(field.unsqueeze(0), k).squeeze(0)
 
 
-def rotate_buoyant_field_continuous(field, theta):
+def rotate_buoyant_field(field, k):
     """
-    Rotate a buoyant flow state (vx, vy, T) by a continuous angle theta.
+    Rotate a buoyant flow state (vx, vy, T) by k * 90 degrees.
 
     Velocity (channels 0-1): spatially rotated + vector components rotated.
     Temperature (channel 2): scalar field, only spatially rotated.
 
     Args:
         field: (B, 3, H, W)
-        theta: scalar tensor
 
     Returns:
         rotated: (B, 3, H, W)
     """
-    B, _, H, W = field.shape
-    device = field.device
-
-    grid = rotate_grid(H, theta, device).expand(B, -1, -1, -1)
-    rotated = Fn.grid_sample(
-        field, grid, mode='bilinear', padding_mode='zeros', align_corners=True
-    )
-
-    c = torch.cos(theta)
-    s = torch.sin(theta)
-    vx, vy = rotated[:, 0:1], rotated[:, 1:2]
+    field_r = torch.rot90(field, k, dims=(-2, -1))
+    vx, vy = field_r[:, 0:1], field_r[:, 1:2]
+    c = [1, 0, -1, 0][k]
+    s = [0, 1, 0, -1][k]
     new_vx = c * vx - s * vy
     new_vy = s * vx + c * vy
 
-    T = rotated[:, 2:3]
+    T = field_r[:, 2:3]
     return torch.cat([new_vx, new_vy, T], dim=1)
 
 
-def rotate_buoyant_field_single(field, theta):
+def rotate_buoyant_field_single(field, k):
     """Unbatched version: field is (3, H, W)."""
-    return rotate_buoyant_field_continuous(field.unsqueeze(0), theta).squeeze(0)
+    return rotate_buoyant_field(field.unsqueeze(0), k).squeeze(0)
 
 
 # ---------------------------------------------------------------------------
@@ -228,9 +179,10 @@ class IsotropicFlowDataset(Dataset):
         field_tp1 = self.fields_tp1[idx]
 
         if self.rotate:
-            theta = torch.rand(1) * 2 * np.pi
-            field_t = rotate_vector_field_single(field_t, theta)
-            field_tp1 = rotate_vector_field_single(field_tp1, theta)
+            k = torch.randint(0, 4, (1,)).item()
+            if k > 0:
+                field_t = rotate_vector_field_single(field_t, k)
+                field_tp1 = rotate_vector_field_single(field_tp1, k)
 
         return field_t, field_tp1
 
@@ -373,9 +325,10 @@ class BuoyantFlowDataset(Dataset):
         state_tp1 = self.states_tp1[idx]
 
         if self.rotate:
-            theta = torch.rand(1) * 2 * np.pi
-            state_t = rotate_buoyant_field_single(state_t, theta)
-            state_tp1 = rotate_buoyant_field_single(state_tp1, theta)
+            k = torch.randint(0, 4, (1,)).item()
+            if k > 0:
+                state_t = rotate_buoyant_field_single(state_t, k)
+                state_tp1 = rotate_buoyant_field_single(state_tp1, k)
 
         return state_t, state_tp1
 
@@ -384,18 +337,19 @@ class BuoyantFlowDataset(Dataset):
 # Training
 # ---------------------------------------------------------------------------
 
-def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path, resume: bool):
+def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path, resume: bool, seed: int):
+    set_seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if dataset == "isotropic":
         trainset = IsotropicFlowDataset(n_samples=50000, rotate=rotation)
         testset = IsotropicFlowDataset(n_samples=5000, rotate=False)
-        rotate_fn = rotate_vector_field_continuous
+        rotate_fn = rotate_vector_field
         channels = 2
     elif dataset == "buoyant":
         trainset = BuoyantFlowDataset(n_samples=50000, rotate=rotation)
         testset = BuoyantFlowDataset(n_samples=5000, rotate=False)
-        rotate_fn = rotate_buoyant_field_continuous
+        rotate_fn = rotate_buoyant_field
         channels = 3
     else:
         raise Exception("Unknown Dataset")
@@ -435,7 +389,7 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
 
     tag = (f"fluid_flow_{'learned_equivariant' if rotation else 'non_equivariant'}"
            f"_{model}{'_thicker' if thicker else ''}_dataset_{dataset}"
-           f"{'_finetuned' if finetune else ''}")
+           f"{'_finetuned' if finetune else ''}_seed_{seed}")
 
     if resume:
         net.load_state_dict(torch.load(f"models/{tag}_model.pth", weights_only=True))
@@ -474,21 +428,6 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
     save_all(net, statistics, tag)
 
 
-def save_all(net, statistics, tag):
-    """Persist statistics and model weights atomically (write-temp-then-rename),
-    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
-    stats_path = f"results/{tag}_statistics.json"
-    tmp_stats = stats_path + ".tmp"
-    with open(tmp_stats, "wt") as f:
-        json.dump(statistics, f)
-    os.replace(tmp_stats, stats_path)
-
-    model_path = f"models/{tag}_model.pth"
-    tmp_model = model_path + ".tmp"
-    torch.save(net.state_dict(), tmp_model)
-    os.replace(tmp_model, model_path)
-
-
 # ---------------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------------
@@ -505,16 +444,11 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
         running_train_loss += criterion(pred, field_tp1).item()
     statistics["train_loss"].append(running_train_loss / len(trainloader))
 
-    # Deterministic angles: evenly-spaced SO(2) elements via Lie algebra
-    eval_angles, angle_labels = so2_eval_angles()
-
     # per-angle test loss (0 = unrotated). The dynamics map is EQUIVARIANT, so the
     # target for a rotated input is the ROTATED next state.
-    running_test_loss = {0: 0.0}
-    for deg in angle_labels:
-        running_test_loss[deg] = 0.0
+    running_test_loss = {0: 0.0, 90: 0.0, 180: 0.0, 270: 0.0}
     # per-layer, PER-ANGLE equivariance tracker (kept separate, not averaged)
-    running_equivariant = {k: {deg: EquivarianceTracker(device) for deg in angle_labels}
+    running_equivariant = {k: {a: EquivarianceTracker(device) for a in ANGLES}
                            for k in layers.keys()}
 
     with torch.inference_mode():
@@ -527,22 +461,22 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
             pred, layers = net(field_t)
             running_test_loss[0] += criterion(pred, field_tp1).item()
 
-            for theta, deg in zip(eval_angles, angle_labels):
-                theta_t = theta.to(device)
-                field_rotated = rotate_fn(field_t, theta_t)
-                target_rotated = rotate_fn(field_tp1, theta_t)
+            for angle in ANGLES:
+                k = angle // 90
+                field_rotated = rotate_fn(field_t, k)
+                target_rotated = rotate_fn(field_tp1, k)
                 pred_rot, layers_rotated = net(field_rotated)   # one forward, reused for loss + equivariance
 
-                running_test_loss[deg] += criterion(pred_rot, target_rotated).item()
+                running_test_loss[angle] += criterion(pred_rot, target_rotated).item()
 
                 for key in layers.keys():
-                    running_equivariant[key][deg].update(layers[key], layers_rotated[key])
+                    running_equivariant[key][angle].update(layers[key], layers_rotated[key])
 
     n_test = len(testloader)
     statistics["test_loss"].append({angle: v / n_test for angle, v in running_test_loss.items()})
     # store the full tracker stats (z, p, floor_std, ...) per layer, per angle
     statistics["equivariant_loss"].append({
-        key: {deg: running_equivariant[key][deg].compute_stats() for deg in angle_labels}
+        key: {angle: running_equivariant[key][angle].compute_stats() for angle in ANGLES}
         for key in running_equivariant
     })
 
@@ -555,9 +489,10 @@ if __name__ == "__main__":
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
     args.add_argument("--finetune", help="The model to load for extra finetuning", type=Path)
     args.add_argument("--resume", help="Resume training", action="store_true")
+    args.add_argument("--seed", help="Random seed for reproducibility", type=int, default=0)
     args = args.parse_args()
 
     if args.model == "naive" and args.thicker:
         raise Exception("Can't make a thicker naive model.")
 
-    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune, args.resume)
+    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune, args.resume, args.seed)
