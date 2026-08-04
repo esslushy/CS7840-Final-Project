@@ -397,7 +397,7 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
             statistics = json.load(f)
         start = len(statistics["equivariant_loss"]) - 1
     else:
-        update_statistics(net, criterion, statistics, trainloader, testloader, device)
+        update_statistics(net, criterion, statistics, trainloader, testloader, device, rotate_fn)
         save_all(net, statistics, tag)
         start = 0
 
