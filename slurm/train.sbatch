@@ -17,7 +17,7 @@ set -euo pipefail
 
 module load cuda python
 
-PROJECT_ROOT="/projects/gllab/claire/CS7840-Final-Project"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT/src"
 
 TRAIN_SCRIPT="$1"
