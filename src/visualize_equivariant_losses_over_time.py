@@ -24,7 +24,8 @@ def main(statistics_pths: list, stat: str):
     ax.set_xlabel("Layer")
     ax.set_xticks(range(len(layer_names)))
     ax.set_xticklabels(layer_names, rotation=45, ha='right')
-    ax.set_ylim(bottom=0, top=1)
+    if stat != "calibrated_sigma":
+        ax.set_ylim(bottom=0, top=1)
     ax.set_ylabel(stat.replace("_", " "))
 
     cmap = plt.get_cmap('gnuplot')
@@ -57,7 +58,7 @@ def main(statistics_pths: list, stat: str):
     base_stem = strip_seed_suffix(statistics_pths[0].stem)
     seed_suffix = f"_n{len(statistics_pths)}seeds" if len(statistics_pths) > 1 else ""
     Path(f"pdfs/{base_stem}").mkdir(exist_ok=True, parents=True)
-    plt.savefig(f"pdfs/{base_stem}/equivariant_loss_{base_stem}{seed_suffix}.pdf")
+    plt.savefig(f"pdfs/{base_stem}/equivariant_loss_{stat}_{base_stem}{seed_suffix}.pdf")
 
 
 if __name__ == "__main__":

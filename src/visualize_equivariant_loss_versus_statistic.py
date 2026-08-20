@@ -50,7 +50,8 @@ def main(statistics_pths: list, train_statistic: str, stat: str):
     for idx, (layer_name, ax) in enumerate(zip(layer_names, axes)):
         ax.set_title(layer_name)
         ax.set_xlabel(train_statistic.replace("_", " ").title())
-        ax.set_ylim(bottom=0, top=1)
+        if stat != "calibrated_sigma":
+            ax.set_ylim(bottom=0, top=1)
         if idx == 0:
             ax.set_ylabel(stat.replace("_", " "))
 
@@ -76,7 +77,7 @@ def main(statistics_pths: list, train_statistic: str, stat: str):
     base_stem = strip_seed_suffix(statistics_pths[0].stem)
     seed_suffix = f"_n{len(statistics_pths)}seeds" if multi_seed else ""
     Path(f"pdfs/{base_stem}").mkdir(exist_ok=True, parents=True)
-    plt.savefig(f"pdfs/{base_stem}/equivariant_vs_{train_statistic}_{base_stem}{seed_suffix}.pdf")
+    plt.savefig(f"pdfs/{base_stem}/equivariant_vs_{train_statistic}_{stat}_{base_stem}{seed_suffix}.pdf")
 
 
 if __name__ == "__main__":

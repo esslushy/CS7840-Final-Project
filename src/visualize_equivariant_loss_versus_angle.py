@@ -61,7 +61,8 @@ def main(statistics_pths: list, statistic: str, field: str):
                                marker='o', c=colors[ep], ecolor=colors[ep], alpha=0.7, capsize=2)
                 else:
                     ax.plot(xs[0], ys[0], marker='o', c=colors[ep])
-            ax.set_ylim(bottom=0, top=1)
+            if field != "calibrated_sigma":
+                ax.set_ylim(bottom=0, top=1)
             if i == 0:
                 ax.set_title(layer, fontsize=9)
             if j == 0:
@@ -82,7 +83,7 @@ def main(statistics_pths: list, statistic: str, field: str):
 
     seed_suffix = f"_n{len(statistics_pths)}seeds" if multi_seed else ""
     Path(f"pdfs/{base_stem}").mkdir(exist_ok=True, parents=True)
-    plt.savefig(f"pdfs/{base_stem}/equivariant_vs_{statistic}_per_angle_{base_stem}{seed_suffix}.pdf")
+    plt.savefig(f"pdfs/{base_stem}/equivariant_vs_{statistic}_per_angle_{field}_{base_stem}{seed_suffix}.pdf")
 
 
 if __name__ == "__main__":
