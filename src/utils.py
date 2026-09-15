@@ -1,7 +1,6 @@
 import json
 import os
 import random
-import re
 import torch
 import numpy as np
 
@@ -47,19 +46,6 @@ def rotate_2d(vecs, theta):
     return torch.stack([c * x - s * y, s * x + c * y], dim=-1)
 
 
-def mean_cka_per_layer(epoch_dict, stat):
-    """
-    epoch_dict maps layer -> {angle: compute_stats_dict}.
-    Return a list of mean cka-scores (averaged over angles) per layer,
-    in the layer order given by the dict keys.
-    """
-    means = []
-    for layer, per_angle in epoch_dict.items():
-        cka_vals = [stats[stat] for stats in per_angle.values()]
-        means.append(float(np.mean(cka_vals)))
-    return means
-
-
 def set_seed(seed: int):
     """Seed every RNG a training run touches (python, numpy, torch CPU/CUDA)."""
     random.seed(seed)
@@ -67,14 +53,6 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-
-
-def strip_seed_suffix(stem: str) -> str:
-    """Strip '_seed_<n>' from a statistics/model-file stem, e.g. for grouping multiple
-    seeded runs of the same experiment under one output name. The seed marker sits
-    before the trailing '_statistics'/'_model' suffix (tag = "..._seed_{n}", then
-    save_all() appends "_statistics"/"_model"), so it isn't always at the very end."""
-    return re.sub(r"_seed_\d+(?=$|_statistics$|_model$)", "", stem)
 
 
 class Random90Rotation:
