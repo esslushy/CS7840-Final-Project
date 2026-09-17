@@ -19,6 +19,38 @@ measurable: on a discrete space where MI can be computed rather than estimated, 
 bijective relabeling of the readout takes linear CKA from 1.0000 to 0.0376 while MI
 does not move by a single bit.
 
+## Headline results
+
+**Thread 1, the sweep** (29 matched pairs, isotropic excluded; linear CKA at the deepest
+layer, final epoch, 10 seeds):
+
+- Rotation augmentation raises measured equivariance in **26/29** pairs, median ΔCKA
+  **+0.0442**. Over training the two conditions move in opposite directions from an
+  identical start: **0.8363 → 0.9313** augmented, **0.8363 → 0.7774** baseline. Without
+  augmentation, training *erodes* the equivariance initialization provided.
+- It is bought, not free. The **upright** test task gets worse in **27/29** pairs (median
+  ×1.186) while the **all-angle** task gets better in **27/29** (median ×0.804) — the
+  same runs, scored two ways, giving opposite answers.
+- Headroom dominates: `classification` starts at 0.4411 and gains +0.51; `colorization`
+  starts at 0.9633 and gains 0.03.
+
+**Thread 2, the metric critique** (exhaustive 2^16 space, so MI is computed exactly, not
+estimated):
+
+- Handed the **exact true ρ(g)**, LEE scores 0.0000 — and 1.2554 after merely permuting
+  four coordinates, indistinguishable from its own 1.3993 shuffled null. It survives
+  nothing but the coordinate system it was written in.
+- A bijective relabeling of the readout takes linear CKA **1.0000 → 0.0376** while exact
+  MI does not move by one bit: `MI(identity) − MI(scrambled) = +0.00e+00`.
+- CKA cannot separate scrambled from destroyed. A lossless scramble scores 0.0376 and a
+  readout destroying 90% of the alphabet scores 0.0431 — it ranks the **lossy** one
+  higher. MI separates them by **4.16 bits** (7.3205 vs 3.1574, MI/H 1.000 vs 0.606).
+- MI is not blindly invariant: on a non-equivariant kernel it correctly reports
+  MI/H 0.195 against 1.000, in every coordinate system.
+
+Full tables: [`src/figures/README.md`](src/figures/README.md) and
+[`src/metric_demos/README.md`](src/metric_demos/README.md).
+
 ## Layout
 
 | folder | what is in it |

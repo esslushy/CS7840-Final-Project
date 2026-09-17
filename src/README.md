@@ -59,6 +59,30 @@ image rotates the gradient vectors), and its two checkpoints are what
 `metric_demos/lie_vs_cka_vector_field_demo.py` uses to show a scalar-per-channel
 equivariance assumption failing on a vector field.
 
+### What the sweep found
+
+Linear CKA at the deepest layer, final epoch, averaged over 10 seeds and probe angles;
+loss columns are augmented / baseline ratios, so >1 means augmentation hurt. Isotropic
+pairs excluded (see the caveats below).
+
+| task | pairs | CKA base | CKA aug. | ΔCKA | upright loss | all-angle loss |
+|---|---|---|---|---|---|---|
+| `classification` | 5 | 0.4411 | 0.9501 | **+0.5090** | ×1.19 | ×0.80 |
+| `colorization` | 8 | 0.9633 | 0.9936 | +0.0303 | ×1.02 | ×0.99 |
+| `fluid_flow` | 4 | 0.6927 | 0.8229 | +0.1302 | ×2.31 | ×0.11 |
+| `fluid_flow_particles` | 4 | 0.9596 | 0.9861 | +0.0265 | ×62.28 | ×0.11 |
+| `stress_prediction` | 4 | 0.7627 | 0.9450 | +0.1823 | ×1.70 | ×0.21 |
+| `stress_prediction_particles` | 4 | 0.7434 | 0.8232 | +0.0798 | ×1.04 | ×0.91 |
+
+Across the 29 non-isotropic pairs: augmentation raises measured equivariance in 26/29
+(median ΔCKA +0.0442), makes the **upright** task worse in 27/29 (median ×1.186), and
+makes the **all-angle** task better in 27/29 (median ×0.804). The same runs, scored two
+ways, give opposite answers — which is why the caveat below is not a footnote.
+
+How much a task gains is mostly a matter of headroom: `classification` starts at 0.4411
+and gains +0.51, while `colorization` starts at 0.9633 and has nothing left to gain.
+Per-config numbers for all 33 pairs are in [`figures/README.md`](figures/README.md).
+
 The grid tasks probe the three non-identity C4 rotations (90/180/270, exact
 `torch.rot90` permutations, no interpolation). The two particle tasks rotate by an exact
 2×2 matmul instead, so they probe 16 evenly spaced SO(2) angles.
