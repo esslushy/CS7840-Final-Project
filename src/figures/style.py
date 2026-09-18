@@ -1,26 +1,21 @@
 """
-Shared plotting style for the sweep figures.
+Shared plotting style for the per-config posters.
 
-Replaces the blocks that were copy-pasted verbatim across the three old
-visualize_*.py scripts (the 'gnuplot' colormap, the `sm._A = []` colorbar hack,
-the ylim guard). Palette is the dataviz reference instance, used unmodified; the
-categorical pair and the ordinal depth ramp both pass the validator
-(categorical: worst adjacent CVD dE 24.7 light / 26.8 dark; ramp: monotone L,
-single hue, light end 2.06:1).
+Palette is the dataviz reference instance, used unmodified. Only the categorical
+pair is left: augmented vs. baseline is the one comparison the posters make, and
+the ordinal depth ramp went with the figures that encoded layer depth as colour
+(each layer now gets its own panel instead).
 """
 from pathlib import Path
 
 import matplotlib as mpl
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
-from matplotlib.colors import LinearSegmentedColormap, Normalize
 
 # --- palette -------------------------------------------------------------
-AUG = "#2a78d6"       # categorical slot 1 (blue)  -- rotation-augmented
+AUG = "#2a78d6"       # categorical slot 1 (blue)   -- rotation-augmented
 BASE = "#eb6834"      # categorical slot 2 (orange) -- baseline
-DEPTH_RAMP = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#0d366b"]
-DIVERGING = ["#1c5cab", "#2a78d6", "#f0efec", "#d03b3b", "#8f2020"]
+# Validated as a categorical pair on the light surface: worst adjacent CVD
+# dE 24.7 light / 26.8 dark, normal-vision dE well clear of the floor.
 
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
@@ -28,9 +23,6 @@ INK_2 = "#52514e"
 MUTED = "#898781"
 GRID = "#e1e0d9"
 AXIS = "#c3c2b7"
-
-depth_cmap = LinearSegmentedColormap.from_list("depth", DEPTH_RAMP)
-div_cmap = LinearSegmentedColormap.from_list("div", DIVERGING)
 
 OUT = Path(__file__).resolve().parent / "out"
 CACHE = Path(__file__).resolve().parent / "cache"
@@ -45,8 +37,28 @@ TASK_LABEL = {
 }
 ID = ["task", "model", "dataset", "augmented"]
 
+# --- which CKA variant the figures report --------------------------------
+# The paper reports *linear* CKA. Under exact equivariance the fiber
+# representation is a permutation, and orthogonal maps leave the centered
+# linear Gram matrix unchanged, so linear CKA is exactly 1 -- the metric
+# matches the correctness argument. RBF is kept only as a robustness check
+# (`--rbf`), because its bandwidth is a free knob that can score a spurious
+# 1.0 on a shuffled control. Both columns are in the cache, so switching
+# costs nothing but the flag.
+_STAT = {"col": "linear_cka", "label": "linear CKA"}
 
-def apply():
+
+def stat():
+    return _STAT["col"]
+
+
+def stat_label():
+    return _STAT["label"]
+
+
+def apply(args=None):
+    if getattr(args, "rbf", False):
+        _STAT.update(col="rbf_cka", label="RBF CKA")
     mpl.rcParams.update({
         "figure.facecolor": SURFACE,
         "axes.facecolor": SURFACE,
@@ -78,68 +90,35 @@ def apply():
 
 
 def load(name):
-    return pd.read_pickle(CACHE / f"{name}.pkl", compression="gzip")
-
-
-def final_epochs(df):
-    """Max epoch per config -- runs are not all the same length (mnist_font = 400)."""
-    return df.groupby(ID, observed=True)["epoch"].transform("max")
-
-
-def at_final_epoch(df):
-    return df[df.epoch == final_epochs(df)]
-
-
-def defect(series):
-    """1 - CKA, floored so it can go on a log axis.
-
-    CKA saturates at 1.0 for much of the sweep; on a linear [0,1] axis those
-    configs are a flat line at the frame top. Plotting the defect on a log axis
-    spreads the saturated regime and the low-CKA regime with one transform.
-    """
-    return np.clip(1.0 - series.to_numpy(dtype=float), 1e-5, None)
-
-
-def depth_colors(n):
-    if n == 1:
-        return [DEPTH_RAMP[2]]
-    return [depth_cmap(i) for i in np.linspace(0, 1, n)]
-
-
-def depth_colorbar(fig, axes, label="Layer depth (input to output)"):
-    sm = plt.cm.ScalarMappable(cmap=depth_cmap, norm=Normalize(0, 1))
-    cbar = fig.colorbar(sm, ax=axes, ticks=[0, 1], pad=0.015, aspect=30)
-    cbar.ax.set_yticklabels(["input", "output"])
-    cbar.set_label(label, color=INK_2, fontsize=9)
-    cbar.outline.set_visible(False)
-    return cbar
-
-
-def condition_legend(ax, **kw):
-    from matplotlib.lines import Line2D
-    handles = [Line2D([], [], color=AUG, lw=2.0, label="Rotation-augmented"),
-               Line2D([], [], color=BASE, lw=2.0, label="Baseline")]
-    return ax.legend(handles=handles, **kw)
+    path = CACHE / f"{name}.pkl"
+    if not path.exists():
+        raise SystemExit(f"cache missing: {path}\n"
+                         f"run `python figures/aggregate.py` from src/ first")
+    return pd.read_pickle(path, compression="gzip")
 
 
 def save(fig, name):
-    OUT.mkdir(parents=True, exist_ok=True)
+    import matplotlib.pyplot as plt
     path = OUT / f"{name}.pdf"
+    # parents=True on the resolved path, so `name` may contain a subdirectory
+    # (the per-config posters write into out/posters/).
+    path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
-    print(f"  wrote {path.relative_to(Path.cwd()) if str(path).startswith(str(Path.cwd())) else path}")
     return path
 
 
 # --- config filtering ----------------------------------------------------
 def common_parser(description=None):
-    """Argument parser shared by every figure script."""
     import argparse
     ap = argparse.ArgumentParser(description=description)
     ap.add_argument("--no-isotropic", action="store_true",
                     help="drop the isotropic-dataset configs. Isotropic data is "
                          "rotation-symmetric by construction, so a rotation-"
                          "equivariance error measured on it is degenerate.")
+    ap.add_argument("--rbf", action="store_true",
+                    help="report RBF CKA instead of linear. Robustness check "
+                         "only -- the paper reports linear (see style._STAT).")
     return ap
 
 
@@ -149,12 +128,3 @@ def apply_filters(df, args):
         df["dataset"] = df["dataset"].cat.remove_unused_categories()
         df["task"] = df["task"].cat.remove_unused_categories()
     return df
-
-
-def suffix(args):
-    return "_no_isotropic" if getattr(args, "no_isotropic", False) else ""
-
-
-def note(args):
-    return ("\nisotropic configs excluded (rotation-symmetric data)"
-            if getattr(args, "no_isotropic", False) else "")

@@ -1,13 +1,19 @@
 """
 Collapse results/*_statistics.json into a few small cached tables.
 
-The raw sweep is 660 JSON files / 1.6 GB, and every figure otherwise re-parses all
-of it. The full tidy cross-product (seed x epoch x layer x angle) would be ~13M
-rows, so instead we cache the three projections the figures actually need:
+The raw sweep is 660 JSON files / 1.6 GB, and the figures would otherwise re-parse
+all of it. The full tidy cross-product (seed x epoch x layer x angle) would be
+~13M rows, so instead we cache three projections:
 
   cka_by_epoch      mean over angles, per (config, seed, epoch, layer)   ~2.1M rows
   cka_by_angle      per angle, at a few checkpoint epochs only           ~0.5M rows
   perf_by_epoch     train/test scalars per (config, seed, epoch, angle)  ~0.1M rows
+
+Only `cka_by_epoch` is read by a figure now -- `fig_posters.py` is the only one
+left. The other two are still built because the project's headline performance
+numbers come out of `perf_by_epoch` (the upright vs. all-angle test-loss ratios,
+which is the "bought, not free" result) and the angle-decay numbers out of
+`cka_by_angle`. Dropping them here would mean those are no longer recomputable.
 
 Stored as pickle rather than parquet because pyarrow is not a project dependency;
 these are regenerable caches, not artifacts.

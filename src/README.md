@@ -7,7 +7,7 @@ different questions, so it is worth knowing which one you are looking at.
 become equivariant, and what does it cost? Nine task scripts live here (six of them in
 the sweep proper), each training a model on clean data while measuring, every epoch and
 every layer, the CKA between features of clean and rotated inputs. Output lands in
-`results/` and is turned into figures by [`figures/`](figures/).
+`results/` and is turned into per-config posters by [`figures/`](figures/).
 
 **Thread 2 — the metric critique.** Is the *metric* trustworthy? These demos construct
 models whose equivariance is known exactly and then check whether standard metrics
@@ -148,7 +148,7 @@ from `__file__`.
   rotation-symmetric by construction, so rotation-equivariance error on it does not mean
   what it means elsewhere. Four pairs are affected (`fluid_flow/unet`,
   `fluid_flow_particles/pointnet`, `stress_prediction/unet`,
-  `stress_prediction_particles/pointnet`). Every `figures/fig_*.py` takes
+  `stress_prediction_particles/pointnet`). `figures/fig_posters.py` takes
   `--no-isotropic`; excluding them moves the grid-task correlation between ΔCKA and
   upright-task cost from r = −0.04 to r = +0.48.
 - **Which test loss you average over flips the headline.** Over all probe angles,

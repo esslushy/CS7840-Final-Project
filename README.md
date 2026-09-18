@@ -56,7 +56,7 @@ Full tables: [`src/figures/README.md`](src/figures/README.md) and
 | folder | what is in it |
 |---|---|
 | [`src/`](src/) | Everything. Start with its README for the working-directory contract. |
-| [`src/figures/`](src/figures/) | The sweep's figure pipeline: 660 result JSONs → 9 claim-driven figures. |
+| [`src/figures/`](src/figures/) | The sweep's figure pipeline: 660 result JSONs → one standalone poster per config. |
 | [`src/metric_demos/`](src/metric_demos/) | Metric-critique demos that need no escnn: exact-MI on an exhaustive discrete space, plus the two Lie-derivative demos that use pretrained checkpoints. |
 | [`src/escnn_experiments/`](src/escnn_experiments/) | The half of that thread needing an exactly-equivariant escnn model as ground truth. Has its own venv — see below. |
 | [`src/Models/`](src/Models/) | Network architectures, one module per task. |

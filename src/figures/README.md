@@ -1,43 +1,40 @@
 # Sweep figures
 
-Claim-driven figures for the training sweep, replacing the old per-config pipeline.
-
-## Why this replaced `generate_all_pdfs.py`
-
-The old pipeline emitted **654 PDFs / 1.3 GB** — three figure families x three stats,
-once per config — and organized them by config, when the things that actually vary
-are *augmentation on/off* and *depth*. Concretely:
-
-- All 66 configs form **33 matched `learned_equivariant` / `non_equivariant` pairs**,
-  and the two conditions were never drawn on shared axes, because they were always
-  written to different directories. The sweep's main result had no figure.
-- `ylim(0, 1)` was hardcoded, but 6 of 33 pairs have *every* layer above 0.99. Those
-  figures were flat lines at the frame top.
-- Epoch was encoded as a `gnuplot` rainbow rather than an axis, so "does equivariance
-  emerge over training" had to be read off a color gradient.
-- `cka_gap` is stored in all 660 results files and was never plotted.
-- The 16-angle particle configs got **16 x 14 = 224-panel** figures to show what is a
-  single smooth curve.
-
-The old `src/pdfs/` output tree (654 PDFs, 1.3 GB) was deleted along with the
-scripts. To recover any of it: `git checkout fb11977 -- src/pdfs`.
+One figure script: [`fig_posters.py`](fig_posters.py), which writes a standalone
+poster per config. The claim-driven sheets that used to live here (`scissors`,
+`depth_profile`, `cost`, `headroom`, `sweep_summary`, `emergence`,
+`angle_profile`, `metric_gap`, `equivariance_vs_performance`) were removed on
+2026-09-18 in favour of the per-config posters alone. To recover any of them:
+`git checkout 82d098c -- src/figures` — but note `fig_scissors.py`, `fig_cost.py`
+and `fig_headroom.py` were never committed and are gone.
 
 ## Usage
 
 ```bash
 cd src
 python figures/aggregate.py                     # rebuild the cache after new runs
-python figures/make_figures.py                  # every figure, all 33 pairs
-python figures/make_figures.py --no-isotropic   # same set, 29 pairs
+python figures/fig_posters.py                   # all 33 posters
+python figures/fig_posters.py --no-isotropic    # the 29 non-degenerate ones
+python figures/fig_posters.py --only "colorization/unet"
 ```
 
-`--no-isotropic` (accepted by `make_figures.py` and by every `fig_*.py`) drops the
-four isotropic-dataset pairs and writes to `*_no_isotropic.pdf`, so both variants
-coexist.
+`--no-isotropic` drops the four isotropic-dataset pairs. Isotropic data is
+rotation-symmetric by construction, so a *rotation*-equivariance error measured on
+it is degenerate. It changes which posters are written, not what any of them
+contains, so poster filenames carry no suffix for it.
 
-`aggregate.py` collapses 660 JSON files / 1.6 GB into ~30 MB of cached tables under
-`figures/cache/`. Pickle rather than parquet because `pyarrow` is not a project
-dependency; these are regenerable caches, not artifacts, and are gitignored.
+**The reported metric is linear CKA.** `style._STAT` is the single place it is
+set; `--rbf` swaps in RBF and suffixes the filename. Linear is the paper's choice
+because the correctness argument is a linear one — under exact equivariance the
+fiber representation is a permutation, and orthogonal maps leave the centered
+linear Gram matrix unchanged, so linear CKA is exactly 1. RBF's bandwidth is a
+free knob that can score a spurious 1.0 on a shuffled control, so it is a
+robustness check, not a result.
+
+`aggregate.py` collapses 660 JSON files / 1.6 GB into ~30 MB of cached tables
+under `figures/cache/`, gitignored. Only `cka_by_epoch` is read by the posters;
+`perf_by_epoch` and `cka_by_angle` are still built because the headline numbers
+below come out of them.
 
 | table | grain | rows |
 |---|---|---|
@@ -45,25 +42,60 @@ dependency; these are regenerable caches, not artifacts, and are gitignored.
 | `cka_by_angle` | + per angle, at checkpoint epochs only | 164 k |
 | `perf_by_epoch` | config x seed x epoch x angle | 1.1 M |
 
-The full tidy cross-product would be ~13 M rows; these three projections cover every
-figure.
+## The posters
 
-## The figures
+One file per matched pair, flat in `out/`, named
+`<task>__<model>__<dataset>.pdf`. Each is a grid of small panels, **one per
+layer titled with that layer's own name** (`conv1`, `enc1_silu2`,
+`block0.attn.residual`), with epoch on x and CKA on y; the two conditions are
+drawn on shared axes as mean ± 1 s.d. over the 10 seeds.
 
-| file | claim |
-|---|---|
-| `depth_profile` | **Main result.** Both conditions start ~1.0 at the input and fan apart with depth |
-| `depth_profile_defect` | Same, as `1 - CKA` on a log axis — the only view in which the saturated configs show structure |
-| `emergence` / `_defect` | Equivariance emerges under augmentation and *decays* without it |
-| `sweep_summary` | All 33 pairs ranked by effect, with a symlog Δ panel |
-| `angle_profile_polar` | CKA decays smoothly with angle, symmetric about 180° |
-| `angle_profile_c4` | The three-angle grid tasks, as a categorical panel |
-| `metric_gap` | Where linear and RBF CKA disagree |
-| `equivariance_vs_performance` | Equivariance is bought, not free: upright-task loss rises in 31/33 pairs |
+**There is no figure title.** The filename identifies the config, and a poster
+dropped into a document takes its identity from the caption there. Only the two
+axis labels (`epoch`, `linear CKA`), the panel names and the legend carry text.
+
+Naming the layers is what makes the deep models readable. On `colorization/unet`
+you can see that `enc1_*` and `dec1_*` stay pinned at 1.0 while the `mid_*` and
+`dec2_*` bottleneck is where the conditions separate; on
+`fluid_flow_particles/transformer` the layer that dives to 0.51 under
+augmentation is `block0.attn.attn` specifically. "layer 14" carried none of that.
+
+- **Both conditions in one file, on shared axes.** The pipeline this replaced
+  wrote them to separate directories and never drew them together, which is why
+  the sweep's main result had no figure at all.
+- **One panel per layer, not one ramp shade per layer.** Overlaying 30 layers and
+  telling them apart by lightness asks the reader to invert a colour ramp by eye,
+  and it spends the only free channel on depth. Faceting frees the two categorical
+  colours for the comparison that matters and makes room for the spread.
+- **Mean ± 1 s.d. over the 10 seeds.** Every config-condition in the sweep has
+  exactly 10 seeds (checked, 66/66), so the band is uniform across the set. On the
+  U-Nets it is wide enough that much of the mid-network divergence is within
+  noise, which is worth seeing.
+- **y is CKA's full 0–1 range on every poster; x runs 0 → 200, or 400 for the two
+  `mnist_font` configs** (it snaps up to the next multiple of `EPOCH_STEP`). Fixed
+  limits mean panels are comparable across configs and not merely within one, and
+  nothing is read off a zoomed axis. An s.d. band crossing 1 is clipped, which is
+  the right call for a metric bounded at 1.
+
+  The cost: **19 of the 33 posters have every layer above 0.999**, so they read as
+  flat lines near the frame top. `colorization/unet` is the clearest case — its
+  `mid_*`/`dec2_*` bottleneck really does diverge between conditions, but by a few
+  thousandths, which is invisible at this scale. Seeing that needs a fitted or log
+  `1 − CKA` axis, which these posters deliberately do not use.
+
+Panels run in depth order left to right, which is why they are not numbered.
+
+Panels where the two conditions coincide to within 2e-3 are labelled
+`curves coincide`, since the later-drawn line otherwise hides the other and the
+panel reads as a single series.
+
+The panel grid always reserves one spare cell for the legend: a figure-level
+legend placed with `loc="outside lower center"` does not account for `supxlabel`
+and renders on top of it.
 
 ## Measured results
 
-What the figures above actually show, in numbers. Every value is at the **final epoch**,
+Numbers for the sweep itself, independent of any figure. Every value is at the **final epoch**,
 at the **deepest layer**, using **linear CKA**, averaged over the 10 seeds and over the
 probe angles; `upright` and `all-angle` are final-epoch test loss ratios,
 augmented / baseline, so >1 means augmentation made it worse.
@@ -97,8 +129,10 @@ scored two ways, give opposite answers with almost identical margins.
 The spread across tasks is the thing to notice. **Classification has by far the most room
 to move** — its baseline sits at 0.4411, so augmentation buys +0.51 — while
 **colorization starts at 0.9633 and has almost nothing to gain**, which is the saturation
-that made the old hardcoded `ylim(0, 1)` figures useless. A task's headroom, not its
-architecture, dominates ΔCKA.
+that made the old hardcoded `ylim(0, 1)` useless. A task's headroom, not its
+architecture, dominates ΔCKA: across the 29 non-isotropic pairs the correlation between
+headroom (1 − baseline CKA) and ΔCKA is **r = +0.81**, and the median config closes
+**61%** of whatever room it had.
 
 ### Emergence over training
 
@@ -117,8 +151,8 @@ training actively erodes what initialization provided.
 
 ### Equivariance vs. upright cost
 
-`fig_equivariance_vs_perf.py` reports r between ΔCKA and log cost per task family. The
-correlation is sensitive to the isotropic configs and not to the kernel:
+r between ΔCKA and log upright cost, per task family. The correlation is sensitive to
+the isotropic configs and not to the kernel:
 
 | | grid (n=23 / 21) | particle (n=10 / 8) |
 |---|---|---|
@@ -126,10 +160,9 @@ correlation is sensitive to the isotropic configs and not to the kernel:
 | RBF CKA, no isotropic | **+0.48** | −0.63 |
 | linear CKA, no isotropic | **+0.50** | −0.62 |
 
-The figure's x-axis uses RBF CKA, but the paper reports linear — and the last two rows
-show that choice does not matter here (+0.48 vs +0.50), so the claim survives the
-substitution. The particle facet has the opposite sign at n=8; treat it as noise, not as
-a counter-result.
+The paper reports linear; the first two rows are the RBF robustness check, and
++0.48 vs +0.50 is the whole difference the kernel makes. The particle facet has the
+opposite sign at n=8; treat it as noise, not as a counter-result.
 
 ### Per-config detail, all 33 pairs
 
@@ -173,8 +206,8 @@ Two entries deserve a health warning. `stress_prediction/unet/isotropic` shows �
 −0.4294 at an upright cost of ×1,899 — it is the degenerate isotropic case, not a
 finding. And the two large particle ratios (×239.73, ×116.49) are inflated denominators:
 those baselines reach a near-zero upright loss, so the ratio is large while the absolute
-difference is tiny. Read the ratio column alongside `fig_sweep_summary`'s symlog panel
-rather than on its own.
+difference is tiny. Read the ratio column alongside the absolute losses rather than on
+its own.
 
 ## Two things worth knowing before citing these
 
