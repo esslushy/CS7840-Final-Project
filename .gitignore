@@ -209,3 +209,10 @@ __marimo__/
 # Pytorch
 models/
 data/
+
+# SLURM job logs
+slurm/logs/
+# Regenerable figure cache (rebuild: python figures/aggregate.py)
+src/figures/cache/
+# Inspection renders; the PDFs are the artifacts
+src/figures/out/*.png

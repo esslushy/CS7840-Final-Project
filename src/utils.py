@@ -1,4 +1,60 @@
+import json
+import os
+import random
 import torch
+import numpy as np
+
+
+def save_all(net, statistics, tag):
+    """Persist statistics and model weights atomically (write-temp-then-rename),
+    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
+    stats_path = f"results/{tag}_statistics.json"
+    tmp_stats = stats_path + ".tmp"
+    with open(tmp_stats, "wt") as f:
+        json.dump(statistics, f)
+    os.replace(tmp_stats, stats_path)
+
+    model_path = f"models/{tag}_model.pth"
+    tmp_model = model_path + ".tmp"
+    torch.save(net.state_dict(), tmp_model)
+    os.replace(tmp_model, model_path)
+
+
+def so2_eval_angles(n):
+    """
+    Sample n evenly-spaced elements of SO(2) via the Lie algebra.
+
+    SO(2) has a single generator J = [[0, -1], [1, 0]].
+    The group elements are exp(t * J) = rotation by angle t.
+    We sample t_k = 2π * k / (n+1) for k = 1, ..., n, which gives n
+    uniformly spaced rotations excluding the identity (t=0).
+
+    Returns (radians_tensor, degree_labels) where degree_labels are integer
+    degrees used as JSON-friendly keys for the per-angle statistics.
+    """
+    ks = range(1, n + 1)
+    radians = torch.tensor([2 * np.pi * k / (n + 1) for k in ks])
+    degrees = [int(round(360.0 * k / (n + 1))) for k in ks]
+    return radians, degrees
+
+
+def rotate_2d(vecs, theta):
+    """Rotate 2D vectors by angle theta (radians). vecs: (..., 2)."""
+    c = torch.cos(theta)
+    s = torch.sin(theta)
+    x, y = vecs[..., 0], vecs[..., 1]
+    return torch.stack([c * x - s * y, s * x + c * y], dim=-1)
+
+
+def set_seed(seed: int):
+    """Seed every RNG a training run touches (python, numpy, torch CPU/CUDA)."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 class Random90Rotation:
     def __call__(self, img):
         k = torch.randint(0, 4, (1,)).item()

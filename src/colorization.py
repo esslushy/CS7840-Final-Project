@@ -1,4 +1,3 @@
-import os
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -8,7 +7,7 @@ import json
 from argparse import ArgumentParser
 from pathlib import Path
 from Models.ColorizationNets import UNet, CNN, NaiveNet, ViT
-from utils import Random90Rotation, EquivarianceTracker
+from utils import Random90Rotation, EquivarianceTracker, set_seed, save_all
 import numpy as np
 
 NUM_EPOCHS = 200
@@ -33,7 +32,8 @@ def rgb_to_grayscale(rgb):
 # Training
 # ---------------------------------------------------------------------------
 
-def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path, resume: bool):
+def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path, resume: bool, seed: int):
+    set_seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     transform_operations = [transforms.ToTensor()]
@@ -93,7 +93,7 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
 
     tag = (f"colorization_{'learned_equivariant' if rotation else 'non_equivariant'}"
            f"_{model}{'_thicker' if thicker else ''}_dataset_{dataset}"
-           f"{'_finetuned' if finetune else ''}")
+           f"{'_finetuned' if finetune else ''}_seed_{seed}")
 
     if resume:
         net.load_state_dict(torch.load(f"models/{tag}_model.pth", weights_only=True))
@@ -131,21 +131,6 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
     print('Finished Training')
     # already saved each epoch; final save is just belt-and-suspenders
     save_all(net, statistics, tag)
-
-
-def save_all(net, statistics, tag):
-    """Persist statistics and model weights atomically (write-temp-then-rename),
-    so an interruption mid-write cannot leave a corrupt file. Called every epoch."""
-    stats_path = f"results/{tag}_statistics.json"
-    tmp_stats = stats_path + ".tmp"
-    with open(tmp_stats, "wt") as f:
-        json.dump(statistics, f)
-    os.replace(tmp_stats, stats_path)
-
-    model_path = f"models/{tag}_model.pth"
-    tmp_model = model_path + ".tmp"
-    torch.save(net.state_dict(), tmp_model)
-    os.replace(tmp_model, model_path)
 
 
 def update_statistics(net, criterion, statistics, trainloader, testloader, device):
@@ -202,9 +187,10 @@ if __name__ == "__main__":
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
     args.add_argument("--finetune", help="The model to load for extra finetuning", type=Path)
     args.add_argument("--resume", help="Resume training", action="store_true")
+    args.add_argument("--seed", help="Random seed for reproducibility", type=int, default=0)
     args = args.parse_args()
 
     if args.model == "naive" and args.thicker:
         raise Exception("Can't make a thicker naive model.")
 
-    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune, args.resume)
+    main(args.model, args.dataset, args.rotation, args.thicker, args.finetune, args.resume, args.seed)
