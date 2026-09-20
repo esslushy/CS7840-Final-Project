@@ -16,7 +16,13 @@ features is unchanged and CKA is exactly 1. That makes it the only metric here
 that can be swept continuously over theta.
 
 So sweep it. For C_N models with N = 1, 2, 4, 8, 16 (plus SO(2) as a floor),
-walk theta from 0 to 360 in half-degree steps and plot 1 - CKA. The prediction:
+walk theta from 0 to 360 in half-degree steps and plot 1 - CKA, normalized by the
+SO(2) control's peak so that y = 1 is the measurement floor. That normalization is
+what makes the curves comparable: raw, C1's peak is 417x the control's, so on one
+linear axis C16 (29x) and the control are both flattened onto the baseline and
+only C1/C2/C4 can be read. Dividing by the floor and going log keeps the
+amplitude ordering -- 417x, 414x, 290x, 113x, 29x, 1x -- while making all six
+legible. --norm none gives the raw linear version. The prediction:
 C_N is exactly equivariant on its own N elements and nowhere else, so its curve
 must touch zero at every multiple of 360/N and rise in between -- N lobes, each
 of width 360/N, shrinking in amplitude as N grows and the model approaches the
@@ -77,7 +83,17 @@ Run (escnn needs the sub-venv; the root venv has no lie_learn):
     src/escnn_experiments/.venv/bin/python3 src/escnn_experiments/cn_angle_sweep_demo.py
     ... --quick        smoke test, ~1 min
     ... --plot-only    re-plot from saved JSON without recomputing
-    ... --lee          sweep the finite-theta error and LEE alongside CKA (2nd figure)
+    ... --norm none     raw 1-CKA on a linear axis (default divides by the SO(2)
+                        control's peak and uses a log axis, which is the only way
+                        C16 and the control are legible beside C1: they differ 417x)
+    ... --lee          sweep the finite-theta error and LEE alongside CKA (2nd figure).
+                       Raw error over theta, one ordinal colour ramp per metric.
+                       Its stdout table scores the zeros: 1-CKA drops to 0.2-1.6%
+                       of its own typical level at the group elements, while the
+                       finite-theta error sits at 98-102% of its own at the same
+                       angles -- it never registers one, not even the lattice
+                       rotations where the exact rho reads 0. That table is only
+                       as good as the angle grid; see lee_angles().
     ... --rho-check    finite-theta error under escnn's exact rho(g), at group elements
 """
 import argparse
@@ -281,12 +297,23 @@ def close_loop(y):
     return np.append(y, y[0])
 
 
-def plot(angles, data, stat, path):
+def logsafe(y):
+    """A log axis cannot draw an exact 0, and matplotlib's default is to break
+    the line into a gap there -- which reads as a rendering fault rather than as
+    the strongest result in the figure. Map zeros far below the axis instead, so
+    each curve plunges off the bottom edge at its group elements; the rug panel
+    underneath is what states that those dips are exactly 0."""
+    return np.where(y > 0, y, 1e-12)
+
+
+def plot(angles, data, stat, path, norm="floor"):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig = plt.figure(figsize=(11, 5.9), dpi=150)
+    # 5.9in was sized for a title band and a four-line footnote; with those gone
+    # the same panel height fits in 4.9, rather than stretching to fill it.
+    fig = plt.figure(figsize=(11, 4.9), dpi=150)
     gs = fig.add_gridspec(2, 2, width_ratios=[3.4, 1.0], height_ratios=[5.0, 1.25],
                           wspace=0.26, hspace=0.10)
     ax = fig.add_subplot(gs[0, 0])
@@ -310,18 +337,48 @@ def plot(angles, data, stat, path):
         peaks[N] = float(y.max())
     x = np.append(np.asarray(angles), 360.0)
 
+    # Raw 1-CKA spans 417x from C1's peak to the SO(2) control's, so on one
+    # linear axis C16 and the control are both pinned to the baseline and only
+    # C1/C2/C4 are legible. Dividing by the control's peak puts every curve in
+    # units of the measurement floor -- y=1 is "as equivariant as the exactly
+    # equivariant model measures" -- and a log axis then fits all five at once
+    # while KEEPING the amplitude-falls-with-N ordering that peak-normalizing
+    # each curve to 1 would throw away.
+    floor = peaks[-1]
+    if norm == "floor":
+        curves = {N: y / floor for N, y in curves.items()}
+        peaks = {N: p / floor for N, p in peaks.items()}
+        unit = "\u00d7 floor"
+        fmt = lambda v: f"{v:,.0f}\u00d7"
+    else:
+        unit, fmt = "", lambda v: f"{v:.3f}"
+
     # SO(2) floor first, so the finite groups draw over it.
-    ax.plot(x, curves[-1], color=MUTED, lw=1.6, ls="--", zorder=2,
-            label=f"SO(2) control   peak {peaks[-1]:.4f}")
+    sane = logsafe if norm == "floor" else (lambda y: y)
+    ax.plot(x, sane(curves[-1]), color=MUTED, lw=1.6, ls="--", zorder=2,
+            label=f"SO(2) control   peak {fmt(peaks[-1])}"
+                  + ("  (defines the floor)" if norm == "floor" else ""))
     handles = []
     for i, N in reversed(list(enumerate(finite))):
-        (h,) = ax.plot(x, curves[N], color=RAMP[i], lw=2.0, zorder=3 + (len(finite) - i),
-                       label=f"C{N}   peak {peaks[N]:.3f}   {N} zero{'s' if N > 1 else ''}")
+        (h,) = ax.plot(x, sane(curves[N]), color=RAMP[i], lw=2.0,
+                       zorder=3 + (len(finite) - i),
+                       label=f"C{N}   peak {fmt(peaks[N])}   {N} zero{'s' if N > 1 else ''}")
         handles.append(h)
     handles.reverse()
 
-    top = max(peaks.values()) * 1.42
-    ax.set_ylim(0, top)
+    if norm == "floor":
+        # One decade below the deepest resolved dip of any finite group; the
+        # exact zeros run off the bottom edge, which the rug panel labels.
+        lo = min(float(curves[N][curves[N] > 0].min()) for N in finite)
+        bot = 10.0 ** math.floor(math.log10(lo))
+        ax.set_yscale("log")
+        ax.set_ylim(bot, max(peaks.values()) * 1.8)
+        # Anything inside this band is indistinguishable from exact equivariance.
+        ax.axhspan(bot, 1.0, color="#eceae1", zorder=1, lw=0)
+        ax.text(357, bot * 1.18, "at or below the SO(2) floor", color=MUTED,
+                fontsize=7.5, ha="right", va="bottom", zorder=8)
+    else:
+        ax.set_ylim(0, max(peaks.values()) * 1.42)
     ax.set_xlim(0, 360)
     ax.set_xticks(np.arange(0, 361, 45))
     ax.set_xticks(np.arange(0, 361, 22.5), minor=True)
@@ -330,10 +387,16 @@ def plot(angles, data, stat, path):
     ax.grid(axis="y", color=GRID, lw=0.8, zorder=0)
     ax.set_axisbelow(True)
     ax.set_xlabel("rotation angle  θ  (degrees)", color=INK)
-    ax.set_ylabel(f"equivariance error   1 − {stat} CKA", color=INK)
-    ax.legend(handles=handles + [ax.lines[0]], loc="upper center", ncol=3,
-              frameon=False, fontsize=8, labelcolor=INK, columnspacing=1.4,
-              handlelength=1.8)
+    ax.set_ylabel((f"(1 − {stat} CKA) / SO(2) floor   (log)"
+                   if norm == "floor" else
+                   f"equivariance error   1 − {stat} CKA"), color=INK)
+    # On the log axis the curves fill the panel and a 1.42x linear-style pad is
+    # a sliver, so the legend moves out into the margin; the raw variant keeps
+    # its original in-panel placement.
+    where = ({"loc": "upper center"} if norm == "none" else
+             {"loc": "lower center", "bbox_to_anchor": (0.5, 1.002)})
+    ax.legend(handles=handles + [ax.lines[0]], ncol=3, frameon=False, fontsize=8,
+              labelcolor=INK, columnspacing=1.4, handlelength=1.8, **where)
     ax.tick_params(labelbottom=False)
     ax.set_xlabel("")
 
@@ -369,27 +432,20 @@ def plot(angles, data, stat, path):
     axi.set_xticks(nn)
     axi.set_xticklabels([f"C{N}" for N in finite], fontsize=8)
     axi.minorticks_off()
-    axi.set_ylim(0, max(peaks[N] for N in finite) * 1.15)
+    if norm == "floor":
+        axi.set_yscale("log")
+        axi.set_ylim(0.55, max(peaks[N] for N in finite) * 2.6)
+    else:
+        axi.set_ylim(0, max(peaks[N] for N in finite) * 1.15)
     axi.grid(axis="y", color=GRID, lw=0.8, zorder=0)
     axi.set_axisbelow(True)
-    axi.set_title("peak error vs. group order", fontsize=9, color=INK, pad=8)
+    axi.set_title("peak error vs. group order" + (f"  ({unit})" if unit else ""),
+                  fontsize=9, color=INK, pad=8)
 
-    fig.suptitle("CKA recovers the rotation group without ever being told ρ(g)",
-                 fontsize=12, color=INK, x=0.5, y=0.985)
-    fig.text(0.5, 0.925, f"C$_N$-equivariant escnn models, untrained; mean of {n_seeds} seed"
-             f"{'s' if n_seeds > 1 else ''}; error touches 0 at every multiple of 360/N",
-             fontsize=8.5, color=MUTED, ha="center")
-    fig.text(0.105, 0.012,
-             f"○  C1 has no group, yet its error notches at 180° — down to "
-             f"{100 * curves[1][notch] / peaks[1]:.0f}% of peak, against "
-             f"{100 * curves[1][int(np.argmin(np.abs(x - 90.0)))] / peaks[1]:.0f}% at 90°. "
-             "Any rotation-invariant readout is dominated by low angular harmonics,\n"
-             "and a 180° rotation maps harmonic m to (−1)$^m$ — every even one survives. "
-             "The notch appears in all four readouts tried (rings, disk-mean,\n"
-             "un-rotation, harmonic-magnitude), so it reflects invariant readouts plus the "
-             "square lattice, not this metric.",
-             fontsize=7, color=MUTED, ha="left", va="bottom", linespacing=1.5)
-    fig.subplots_adjust(top=0.865, bottom=0.225, left=0.105, right=0.955)
+    # No suptitle/subtitle to clear any more, so the axes take the space back;
+    # the floor variant still leaves a strip above for its out-of-panel legend.
+    fig.subplots_adjust(top=0.930 if norm == "none" else 0.900,
+                        bottom=0.105, left=0.105, right=0.955)
     rb = rug.get_position()
     fig.text(0.012, (rb.y0 + rb.y1) / 2, "exact\nzeros", color=MUTED, fontsize=8,
              ha="left", va="center")
@@ -423,11 +479,69 @@ def plot(angles, data, stat, path):
 # scalar), undefined (no rho off-group), or wrong (naive rho). --lee measures
 # all three.
 #
+# The figure plots both raw, on one linear axis. Normalizing each metric by its
+# own scale was tried twice (per model, then per metric pooled) and read worse
+# both times: it buys a level comparison the two do not support anyway -- the
+# finite-theta error is a norm ratio saturating near 1, 1-CKA a similarity
+# deficit at 1e-2 -- at the cost of the panel's directly readable amplitudes.
+# The zeros comparison it was meant to serve lives in the stdout table instead.
+#
 # Both variants below rotate the FEATURE map by grid_sample. That interpolation
 # is unavoidable for any rho-dependent metric, and is precisely what the ring
 # readout is built to avoid.
 # ---------------------------------------------------------------------------
 LEE_N, LEE_SEEDS, LEE_STEP, LEE_CHUNK, LIE_EPS = 48, 3, 2.0, 16, 0.02
+LEE_OFFSETS = (0.5, 1.5, 4.0)   # sampled either side of every group element
+
+
+def lee_angles():
+    """The LEE_STEP grid UNION every C_N group element, plus offsets around each.
+
+    A uniform grid will not do for this figure. At LEE_STEP=2 the only sampled
+    multiples of 22.5 are 0/90/180/270, so C8 lands on 4 of its 8 elements and
+    C16 on 4 of 16 -- the same aliasing ANGLE_STEP warns about for the main
+    sweep, and fatal here, because the claim IS that 1-CKA vanishes exactly on
+    the elements. Every element of every swept group is a multiple of 360/16, so
+    putting all 16 on the grid covers C1, C2, C4, C8 and C16 at once. The
+    offsets resolve how narrow each dip is; anything off the base grid is
+    excluded from theta-averages, which assume uniform spacing."""
+    a = set(np.arange(0.0, 360.0, LEE_STEP).tolist())
+    for k in range(16):
+        e = 360.0 * k / 16.0
+        a.add(e)
+        for d in LEE_OFFSETS:
+            a.add((e + d) % 360.0)
+            a.add((e - d) % 360.0)
+    return sorted(a)
+
+
+def base_mask(a):
+    """Which angles lie on the uniform LEE_STEP grid. lee_angles() clusters extra
+    samples around the group elements, so a plain mean or median over the full
+    grid is weighted toward the dips and is not a "typical level" of anything."""
+    return np.isclose(np.mod(np.asarray(a), LEE_STEP), 0.0)
+
+
+def elem_indices(a, N):
+    """(grid indices of the sampled C_N elements, angles of the unsampled ones).
+
+    theta=0 is excluded throughout: every metric is trivially 0 at the identity,
+    so counting it would flatter both equally and prove nothing.
+
+    The missing list is returned rather than swallowed because a uniform
+    LEE_STEP=2 grid contains no multiple of 22.5 except 0/90/180/270, so C8 lands
+    on 4 of its 8 elements and C16 on 4 of 16 -- and the 4 it lands on are the
+    lattice rotations, the easy ones. Nearest-sample substitution is not an
+    option: the dips are about 2 degrees wide (C4 reads 0.0005 at 90 but 0.020 at
+    88), so scoring an element 1 degree away would report a true zero as a miss.
+    Callers draw the gap; lee_angles() removes it on a rebuild."""
+    a = np.asarray(a)
+    idx, missing = [], []
+    for k in range(1, N):
+        e = 360.0 * k / N
+        i = int(np.argmin(np.abs(a - e)))
+        (idx.append(i) if abs(a[i] - e) < 1e-6 else missing.append(e))
+    return np.array(idx, dtype=int), missing
 
 
 def rotate_feat(t, theta):
@@ -568,6 +682,37 @@ def rho_check(n=32, seeds=2):
 CAT = {"cka": "#2a78d6", "lee": "#eb6834", "lie": "#1baf7a"}
 
 
+def elem_ratios(a, y, N, base):
+    """(value at each non-identity C_N element / typical level, typical level,
+    elements the grid misses).
+
+    "Typical level" is the median over the uniform subgrid, which makes the two
+    metrics -- 1-CKA at 1e-2 and a finite-theta error at ~1.0 -- comparable as
+    fractions of their own scale. Returned per element rather than reduced,
+    because the spread is the finding: 1-CKA is a true zero at the lattice
+    rotations and only a shallow dip at the off-lattice elements, where a C_N
+    model on a square grid genuinely is not equivariant (--rho-check measures
+    0.354 there against escnn's exact rho). A single worst-case number would
+    report that honest shallowness as a failure to locate the element."""
+    med = float(np.median(y[base]))
+    idx, missing = elem_indices(a, N)
+    return y[idx] / med, med, missing
+
+
+# One ordinal ramp per metric instead of one hue at three alphas. Alpha was the
+# problem: 0.50/0.75/1.00 of the same hue is a ~0.1 lightness spread against the
+# surface, and the C4 and C8 curves were not separable where they overlap. These
+# are real steps -- each ramp validated --ordinal (monotone lightness, adjacent
+# dL >= 0.06, light end >= 2:1 on the surface, hue spread <= 6 deg), and every
+# blue-vs-orange pair clears CVD dE 16-27 against a >= 8 target. Order is
+# C4 -> C8 -> C16 -> SO(2), which is also the group-order progression, so the
+# ramp direction carries meaning rather than just separating lines.
+LEE_RAMP = {
+    "cka": ["#86b6ef", "#3987e5", "#1c5cab", "#0d366b"],
+    "lee": ["#ef8853", "#e2621f", "#b0410f", "#7a2c08"],
+}
+
+
 def plot_lee(angles, data, path):
     import matplotlib
     matplotlib.use("Agg")
@@ -576,7 +721,7 @@ def plot_lee(angles, data, path):
     x = np.append(np.asarray(angles), 360.0)
     finite = [N for N in GROUPS if N != -1]
     shown = [4, 8, 16]
-    fig = plt.figure(figsize=(11, 4.9), dpi=150)
+    fig = plt.figure(figsize=(11, 4.7), dpi=150)
     gs = fig.add_gridspec(1, 2, width_ratios=[3.0, 1.35], wspace=0.24)
     ax, axb = fig.add_subplot(gs[0]), fig.add_subplot(gs[1])
     for a in (ax, axb):
@@ -590,43 +735,45 @@ def plot_lee(angles, data, path):
         a.set_axisbelow(True)
     fig.patch.set_facecolor(SURFACE)
 
+    def series(N, k):
+        return close_loop(np.asarray(data[str(N)][k]).mean(0))
+
     for i, N in enumerate(shown):
-        sh = 0.5 + 0.25 * i
-        ax.plot(x, close_loop(np.asarray(data[str(N)]["lee"]).mean(0)), color=CAT["lee"], lw=1.7,
-                ls="--", alpha=sh, zorder=3, label=f"finite-\u03b8 err, naive \u03c1   C{N}")
-        ax.plot(x, close_loop(np.asarray(data[str(N)]["cka"]).mean(0)), color=CAT["cka"], lw=2.0,
-                alpha=sh, zorder=4, label=f"1 \u2212 CKA   C{N}")
+        ax.plot(x, series(N, "lee"), color=LEE_RAMP["lee"][i], lw=1.7, ls="--",
+                zorder=3, label=f"finite-\u03b8 err, naive \u03c1   C{N}")
+        ax.plot(x, series(N, "cka"), color=LEE_RAMP["cka"][i], lw=2.0,
+                zorder=4, label=f"1 \u2212 CKA   C{N}")
     # The SO(2) control, on both metrics. It is the sharpest line in the panel:
     # its CKA is pinned at ~0 for every theta (equivariant everywhere, which is
-    # the truth), while its finite-theta error rides ABOVE every finite group -- it
-    # ranks the only exactly-equivariant model as the least equivariant one.
+    # the truth), while its finite-theta error rides ABOVE every finite group --
+    # it ranks the only exactly-equivariant model as the least equivariant one.
+    # It takes the dark end of each ramp, since SO(2) is where C_N is heading.
     dot = (0, (1.4, 1.4))
-    ax.plot(x, close_loop(np.asarray(data["-1"]["lee"]).mean(0)), color=CAT["lee"],
-            lw=2.4, ls=dot, zorder=6, label="finite-\u03b8 err, naive \u03c1   SO(2)")
-    ax.plot(x, close_loop(np.asarray(data["-1"]["cka"]).mean(0)), color=CAT["cka"],
-            lw=2.4, ls=dot, zorder=7, label="1 \u2212 CKA   SO(2)")
+    ax.plot(x, series(-1, "lee"), color=LEE_RAMP["lee"][3], lw=2.4, ls=dot,
+            zorder=6, label="finite-\u03b8 err, naive \u03c1   SO(2)")
+    ax.plot(x, series(-1, "cka"), color=LEE_RAMP["cka"][3], lw=2.4, ls=dot,
+            zorder=7, label="1 \u2212 CKA   SO(2)")
     ax.set_xlim(0, 360)
-    ax.set_ylim(0, max(close_loop(np.asarray(data[str(N)]["lee"]).mean(0)).max()
-                   for N in shown + [-1]) * 1.52)
+    ax.set_ylim(0, max(series(N, "lee").max() for N in shown + [-1]) * 1.52)
     ax.set_xticks(np.arange(0, 361, 45))
     ax.set_xlabel("rotation angle  \u03b8  (degrees)", color=INK)
     ax.set_ylabel("relative equivariance error", color=INK)
     ax.legend(loc="upper center", ncol=4, frameon=False, fontsize=7,
               labelcolor=INK, columnspacing=1.0, handlelength=2.4)
-    ax.set_title("The Lie-derivative family is flat across every group; CKA resolves each one",
-                 fontsize=9.5, color=INK, pad=8)
 
     order = finite + [-1]
     nn = np.arange(len(order))
-    series = [
+    base = base_mask(angles)
+    for label, key, vals, mk in [
         ("1 \u2212 CKA (mean over \u03b8)", "cka",
-         [float(np.asarray(data[str(N)]["cka"]).mean()) for N in order], "-o"),
+         [float(np.asarray(data[str(N)]["cka"]).mean(0)[base].mean()) for N in order], "-o"),
         ("finite-\u03b8 err, naive \u03c1 (mean)", "lee",
-         [float(np.asarray(data[str(N)]["lee"]).mean()) for N in order], "-s"),
+         [float(np.asarray(data[str(N)]["lee"]).mean(0)[base].mean()) for N in order], "-s"),
         ("LEE = \u2016L$_X$f\u2016/\u2016f\u2016  (per rad)", "lie",
          [float(np.mean(data[str(N)]["lie"])) for N in order], "-^"),
-    ]
-    for label, key, vals, mk in series:
+    ]:
+        # The summary panel is one mark per metric, so it keeps the categorical
+        # slots; only the theta panel needed the ramps.
         axb.plot(nn, vals, mk, color=CAT[key], lw=1.8, ms=6, mfc=SURFACE, mew=1.8,
                  zorder=3, label=label)
     axb.set_xticks(nn)
@@ -636,18 +783,8 @@ def plot_lee(angles, data, path):
     axb.set_ylabel("equivariance error  (log)", color=INK, fontsize=8)
     axb.legend(loc="lower left", frameon=False, fontsize=7, labelcolor=INK,
                handlelength=2.0)
-    axb.set_title("what each metric says about group order", fontsize=9.5, color=INK, pad=8)
 
-    cka_v = [float(np.asarray(data[str(N)]["cka"]).mean()) for N in order]
-    lee_v = [float(np.asarray(data[str(N)]["lee"]).mean()) for N in order]
-    fig.text(0.5, 0.015,
-             f"Only CKA falls with N ({cka_v[0]:.3f} \u2192 {cka_v[-2]:.3f} across C1\u2192C16, a factor of {cka_v[0] / cka_v[-2]:.0f}). The finite-\u03b8 error under the naive \u03c1 is flat "
-             f"({min(lee_v[:-1]):.2f}\u2013{max(lee_v[:-1]):.2f}) and inverts at the end: it scores SO(2), the one model\n"
-             f"equivariant at every \u03b8, worst of all at {lee_v[-1]:.2f}. The correct \u03c1 for a regular field also permutes the fiber, which spatial rotation alone misses, so the error saturates near 1 and group order never shows.\n"
-             "LEE is taken at the identity: one scalar per model, no \u03b8 argument at all. It separates SO(2) from the rest \u2014 which is all it can see \u2014 and is flat across the entire C$_N$ family.\n"
-             "LEE (Local Equivariance Error) is that derivative's norm, so it carries units of rad$^{-1}$ while CKA and the finite-\u03b8 error are dimensionless ratios: compare its shape across N, not its level against the other two.",
-             fontsize=7, color=MUTED, ha="center", va="bottom", linespacing=1.5)
-    fig.subplots_adjust(top=0.88, bottom=0.24, left=0.075, right=0.985)
+    fig.subplots_adjust(top=0.965, bottom=0.115, left=0.075, right=0.985)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, facecolor=SURFACE)
     fig.savefig(path.with_suffix(".png"), facecolor=SURFACE)
@@ -662,6 +799,10 @@ def main():
                    help="smoke test (~1 min); C16 is under-resolved at 65^2, see note")
     p.add_argument("--plot-only", action="store_true", help="re-plot from saved JSON")
     p.add_argument("--stat", default="linear", choices=["linear", "rbf"])
+    p.add_argument("--norm", default="floor", choices=["floor", "none"],
+                   help="floor (default): plot 1-CKA in units of the SO(2) "
+                        "control's peak on a log axis, so all six curves are "
+                        "legible at once; none: raw 1-CKA on a linear axis")
     p.add_argument("--rho-check", action="store_true",
                    help="LEE under escnn's exact rho(g) at the group elements")
     p.add_argument("--lee", action="store_true",
@@ -678,19 +819,34 @@ def main():
             blob = json.loads(jp.read_text())
             ang, ld = blob["angles"], blob["data"]
         else:
-            ang = list(np.arange(0.0, 360.0, LEE_STEP))
+            ang = lee_angles()
             print(f"device={DEVICE}  n={LEE_N}  seeds={LEE_SEEDS}  angles={len(ang)}")
             ld = lee_sweep(ang)
             OUT_DIR.mkdir(parents=True, exist_ok=True)
             jp.write_text(json.dumps({"angles": ang, "data": ld}))
             print(f"  wrote {jp}")
         plot_lee(ang, ld, OUT_DIR / "cn_angle_sweep_lee.pdf")
-        print(f"\n{'model':>7s} {'mean 1-CKA':>11s} {'mean fin-err':>13s} {'LEE':>8s}")
+        # Means over the uniform subgrid only; the extra samples lee_angles()
+        # clusters at the group elements would pull a full-grid mean down.
+        bm = base_mask(ang)
+        print(f"\n{'model':>7s} {'mean 1-CKA':>11s} {'mean fin-err':>13s} {'LEE':>8s}"
+              f"   {'worst elem, as % of own median':>32s}")
         for N in GROUPS:
             nm = "SO(2)" if N == -1 else f"C{N}"
-            print(f"{nm:>7s} {np.asarray(ld[str(N)]['cka']).mean():11.4f} "
-                  f"{np.asarray(ld[str(N)]['lee']).mean():13.4f} "
-                  f"{np.mean(ld[str(N)]['lie']):8.4f}")
+            cka = np.asarray(ld[str(N)]["cka"]).mean(0)
+            fin = np.asarray(ld[str(N)]["lee"]).mean(0)
+            if N == -1 or N == 1:
+                # SO(2) is equivariant at every theta and C1 only at the identity;
+                # neither has a non-identity element for a metric to find.
+                tail = "   (no non-identity elements to find)"
+            else:
+                r_c, _, miss = elem_ratios(ang, cka, N, bm)
+                r_f = elem_ratios(ang, fin, N, bm)[0]
+                tail = (f"   1-CKA {100 * r_c.min():5.1f}-{100 * r_c.max():<5.1f}"
+                        f"  fin-err {100 * r_f.min():5.1f}-{100 * r_f.max():<5.1f}"
+                        + (f"  ({len(r_c)}/{N - 1} elems sampled)" if miss else ""))
+            print(f"{nm:>7s} {cka[bm].mean():11.4f} {fin[bm].mean():13.4f} "
+                  f"{np.mean(ld[str(N)]['lie']):8.4f}{tail}")
         return
 
     if args.quick:   # ks/cutoff must scale with the grid, not stay at KS=33
@@ -717,7 +873,8 @@ def main():
         }))
         print(f"  wrote {json_path}")
 
-    plot(angles, data, args.stat, OUT_DIR / f"{tag}_{args.stat}.pdf")
+    suffix = "_raw" if args.norm == "none" else ""
+    plot(angles, data, args.stat, OUT_DIR / f"{tag}_{args.stat}{suffix}.pdf", args.norm)
     if args.quick:
         print("\n  NOTE: --quick runs a 65^2 grid, which is under-resolved for C16 "
               "(expect\n  contrast near 1x there). It checks that the pipeline runs, "
@@ -725,11 +882,14 @@ def main():
 
     # Contrast report: how deep is each group's own dip relative to its lobes?
     x = np.asarray(angles)
-    print(f"\n{'model':>7s} {'peak':>9s} {'worst elem':>11s} {'min lobe':>9s} {'contrast':>9s}")
+    floor = float(np.asarray(data["-1"][args.stat]).mean(0).max())
+    print(f"\n{'model':>7s} {'peak':>9s} {'peak/floor':>11s} {'worst elem':>11s} "
+          f"{'min lobe':>9s} {'contrast':>9s}")
     for N in GROUPS:
         y = np.asarray(data[str(N)][args.stat]).mean(0)
         if N == -1:
-            print(f"{'SO(2)':>7s} {y.max():9.5f} {'--':>11s} {'--':>9s}   (floor)")
+            print(f"{'SO(2)':>7s} {y.max():9.5f} {1.0:11.1f} {'--':>11s} {'--':>9s}"
+                  f"   (defines floor)")
             continue
         elem = np.array([abs((x - 360.0 * k / N + 180) % 360 - 180).argmin() for k in range(N)])
         worst = y[elem].max()
@@ -737,7 +897,8 @@ def main():
         lobes = [y[(x > 360.0 * k / N) & (x < 360.0 * (k + 1) / N)] for k in range(N)]
         min_lobe = min(float(l.max()) for l in lobes if l.size)
         c = "exact 0" if worst < 1e-9 else f"{min_lobe / worst:.1f}x"
-        print(f"{'C' + str(N):>7s} {y.max():9.5f} {worst:11.5f} {min_lobe:9.5f} {c:>9s}")
+        print(f"{'C' + str(N):>7s} {y.max():9.5f} {y.max() / floor:11.1f} {worst:11.5f} "
+              f"{min_lobe:9.5f} {c:>9s}")
 
 
 if __name__ == "__main__":
