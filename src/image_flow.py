@@ -27,7 +27,12 @@ def rotate_flow(flow, k):
     flow_r = torch.rot90(flow, k, dims=(-2, -1))
     fx, fy = flow_r[:, 0:1], flow_r[:, 1:2]
     c = [1, 0, -1, 0][k]
-    s = [0, 1, 0, -1][k]
+    # Sign convention: torch.rot90 on dims (-2,-1) maps the row axis toward the
+    # column axis, and the meshgrid is indexing='ij', so rows index y and columns
+    # index x. The component mixing must match that handedness. The conjugate
+    # table [0, 1, 0, -1] negates the field at 90 and 270 degrees -- verified
+    # against the generative ground truth, which is exactly equivariant.
+    s = [0, -1, 0, 1][k]
     return torch.cat([c * fx - s * fy, s * fx + c * fy], dim=1)
 
 
