@@ -1,6 +1,6 @@
 # An Information-Theoretic Approach to Learned Equivariance
 
-CS7840 final project. Two questions, pursued in two threads that share one codebase:
+Two questions, pursued in two threads that share one codebase:
 
 1. **Does rotation augmentation actually buy equivariance, and what does it cost?**
    A 66-config training sweep over six tasks, measuring layer-by-layer CKA between
