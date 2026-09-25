@@ -5,10 +5,6 @@
 # (out, acts) tuple returned by Attention). Both are fixed, so this submits
 # the 2 regimes x 10 seeds = 20 runs.
 #
-# Resources differ from train.sbatch's defaults, so they are overridden on the
-# sbatch command line (which takes precedence over its #SBATCH lines):
-# partition gpu, 8 hours, 8 CPUs, 8G memory, any single GPU.
-#
 # Seeds that already have a finished run (check_done.py) or are already
 # queued/running under the same job name are skipped, so re-running this is
 # idempotent.
@@ -32,14 +28,6 @@ JOB=classification.py
 MODEL=vit
 DATASET=mnist_font
 NUM_EPOCHS=400   # classification on mnist_font (see NUM_EPOCHS in classification.py)
-
-SBATCH_RESOURCES=(
-  --partition=gpu
-  --gres=gpu:1
-  --time=08:00:00
-  --cpus-per-task=8
-  --mem=8G
-)
 
 queued_seeds_for() {
   local name="$1"
@@ -80,7 +68,7 @@ for regime in baseline equivariant; do
 
   array_spec="$(IFS=,; echo "${missing_seeds[*]}")"
   echo "submit: $name --array=$array_spec"
-  $DRY_RUN || sbatch "${SBATCH_RESOURCES[@]}" --job-name="$name" \
+  $DRY_RUN || sbatch --job-name="$name" \
       --array="$array_spec" slurm/train.sbatch "$JOB" "${extra_args[@]}"
 done
 
