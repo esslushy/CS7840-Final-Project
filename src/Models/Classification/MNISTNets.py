@@ -138,7 +138,8 @@ class Transformer(nn.Module):
     def forward(self, x):
         acts = OrderedDict()
         for i, (attn, ff) in enumerate(self.layers):
-            attn_out = attn(x)
+            attn_out, attn_acts = attn(x, prefix=f"block{i}.attn.")
+            acts.update(attn_acts)
             x = attn_out + x
             acts[f"block{i}.attn.residual"] = x.detach()
             ff_out, ff_acts = ff(x, prefix=f"block{i}.ff.")

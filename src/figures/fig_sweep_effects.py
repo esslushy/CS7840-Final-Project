@@ -20,16 +20,25 @@ WHAT EXACTLY IS PLOTTED, since a single CKA number could mean several things:
            spaced SO(2) elements for particle tasks.
   seeds    median over the 10 seeds, with the interquartile range as the bar.
 
-Columns are sorted within each task by the BASELINE value, so the ceiling is
-visible as structure: configurations that start near 1.0 have nowhere to go,
-and their short connectors are headroom rather than absence of effect.
+Within each task, columns are grouped by dataset, and within a dataset the
+models appear in the same fixed order everywhere (MODEL_ORDER), so a model sits
+in the same slot of every group. Configurations that start near 1.0 have
+nowhere to go, and their short connectors are headroom rather than absence of
+effect.
 
-Run: cd src && python figures/fig_sweep_effects.py [--no-isotropic]
+Run: cd src && python figures/fig_sweep_effects.py
 """
+import argparse
+
 import pandas as pd
 import matplotlib.pyplot as plt
 
 import style
+
+# Same slot in every group: vit, unet, cnn, naive. The particle tasks' models
+# take the slot of their grid counterpart (transformer ~ vit, pointnet ~ cnn),
+# with mlp just before naive.
+MODEL_ORDER = ["vit", "transformer", "unet", "cnn", "pointnet", "mlp", "naive"]
 
 
 def summarise(df):
@@ -46,7 +55,7 @@ def summarise(df):
     rows = []
     for (t, m, d), g in piv.groupby(level=[0, 1, 2], observed=True):
         rows.append(dict(
-            task=t, label=f"{m}/{d}", n=len(g),
+            task=t, dataset=d, model=m, label=f"{m}/{d}", n=len(g),
             base=g[False].median(),
             base_lo=g[False].quantile(.25), base_hi=g[False].quantile(.75),
             aug=g[True].median(),
@@ -55,21 +64,31 @@ def summarise(df):
 
 
 def main():
-    ap = style.common_parser(__doc__)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--rbf", action="store_true",
+                    help="report RBF CKA instead of linear (robustness check).")
     args = ap.parse_args()
     style.apply(args)
 
-    r = summarise(style.apply_filters(style.load("cka_by_epoch"), args))
-    r = r.sort_values(["task", "base"], ascending=[True, True])
+    df = style.load("cka_by_epoch")
+    r = summarise(df[df.dataset != "isotropic"])
+    rank = {m: i for i, m in enumerate(MODEL_ORDER)}
+    r["model_rank"] = r.model.map(rank).fillna(len(rank))
+    r = r.sort_values(["task", "dataset", "model_rank"])
 
     xpos, labels, seps, heads = [], [], [], []
     x = 0.0
     groups = list(r.groupby("task", observed=True, sort=False))
     for gi, (task, g) in enumerate(groups):
-        heads.append((x + (len(g) - 1) / 2, style.TASK_LABEL.get(task, task)))
-        for _ in range(len(g)):
-            xpos.append(x); x += 1
-        labels.extend(g.label.tolist())
+        x0 = x
+        for di, (_, gd) in enumerate(g.groupby("dataset", observed=True,
+                                               sort=False)):
+            if di:
+                x += 0.6
+            for _ in range(len(gd)):
+                xpos.append(x); x += 1
+            labels.extend(gd.label.tolist())
+        heads.append(((x0 + x - 1) / 2, style.TASK_LABEL.get(task, task)))
         if gi < len(groups) - 1:
             seps.append(x - 0.5 + 0.8)
         x += 1.6
