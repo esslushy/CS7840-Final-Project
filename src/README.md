@@ -136,7 +136,7 @@ Despite the name, `equivariant_loss` holds CKA *similarity*: higher is more equi
 `lie_vs_cka*` demos need the `classification_*_cnn_dataset_cifar` and
 `gradient_field_*_unet_dataset_mnist` checkpoints and will fail without them.
 
-**`data/`** — torchvision download target (MNIST, CIFAR-10, STL-10, CelebA).
+**`data/`** — torchvision download target (MNIST, CIFAR-10, STL-10).
 Created at runtime and not included, shared by every thread including
 `escnn_experiments/`, which resolves it from `__file__`.
 

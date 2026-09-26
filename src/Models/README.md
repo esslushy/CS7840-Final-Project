@@ -39,15 +39,10 @@ guarantee is needed as ground truth instead.
 | `FluidFlowParticlesNets.py` | `fluid_flow_particles.py` | NaiveNet, MLP, PointNet, SetTransformer |
 | `StressPredictionParticlesNets.py` | `stress_prediction_particles.py` | NaiveNet, MLP, PointNet, SetTransformer |
 | `InvertNets.py` | `image_inversion.py` | CNN only |
-| `FaceSwapNets.py` | — | ResBlock, SmileToNeutralGenerator, PatchDiscriminator |
 
 The five grid files are near-identical by design — same four classes, differing in input
 and output channel counts and the head. They were copied rather than parameterized, so a
 change to the shared `Transformer` block has to be made in each.
-
-`FaceSwapNets.py` is an **orphan**: there is no `face_swap.py` in `src/`, though two
-`face_swap_*.pth` checkpoints exist in `../models/`. The task was trained at some point
-and the script is not in the repo. It is not part of the sweep and nothing depends on it.
 
 ## Layer naming matters
 
