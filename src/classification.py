@@ -42,7 +42,8 @@ def main(model: str, dataset: str, rotation: bool, holdout: str, thicker: bool, 
 
     if model == "vit":
         net = ViT(image_size=32 if dataset == "cifar" else 28, patch_size=4, num_classes=10,
-                  dim=256 if thicker else 128, depth=1, heads=1, mlp_dim=256 if thicker else 128)
+                  dim=256 if thicker else 128, depth=1, heads=1, mlp_dim=256 if thicker else 128,
+                  channels=3 if dataset == "cifar" else 1)
     elif model == "naive":
         net = NaiveNet()
     elif model == "cnn":
