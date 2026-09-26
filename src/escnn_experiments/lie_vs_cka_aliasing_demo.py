@@ -39,10 +39,30 @@ loops in classification.py / gradient_field.py) uses only discrete rot90
 rotations. This demo shows that is precisely the regime in which
 downsampling-induced aliasing cannot be detected at all.
 
-FINDING (see measured output): at generic angles, naive subsampling inflates
-the representation-aware equivariance error from ~0.13 to ~0.22, and
-blur-then-subsample brings it back to ~0.15. Linear CKA, however, sits at
-~0.999 for ALL THREE export modes -- it does not register the loss at all.
+MEASURED, at theta = 2.0 rad (114.6 deg, off-lattice), 256 MNIST images:
+
+  condition                      err       cka   cka null
+  grid-aligned (theta = pi/2)  0.00000   1.0000     0.0729
+  full resolution              0.13429   0.9994     0.0722
+  subsample                    0.21735   0.9995     0.0727
+  blur, then subsample         0.15250   0.9989     0.0432
+
+FINDING. Naive subsampling inflates the representation-aware equivariance error
+from 0.13 to 0.22, and blur-then-subsample brings it back to 0.15 -- a loss
+identified by mechanism and then repaired. Linear CKA reads ~0.999 through all
+three and does not register either the damage or the fix.
+
+AND IT IS SATURATED, NOT VACUOUS -- which is why the null column is here. A
+reading of 0.999 could mean either "these really are nearly identical" or "this
+metric returns 0.999 on anything", the second being the failure mode RBF CKA
+has at small bandwidth (unlearnable_rho_demo.py), where signal and shuffled
+control both hit 1.0000. Row-shuffling the rotated branch here gives ~0.07, so
+CKA sits about 14x above its own floor and the readings are real. The precise
+failure is therefore one of RANGE rather than of validity: CKA spans 1.0000 to
+0.9980 across the whole experiment while the quantity it tracks runs from
+exactly 0 to 0.236. Note also that the null is lower for blur_subsample (0.043
+vs 0.072): blurring reduces the effective rank of the features, and a
+lower-rank Gram matrix has a lower chance agreement.
 
 So this is the counterpoint to the other three demos, and the reason the two
 metrics are complementary rather than one dominating the other:
@@ -124,6 +144,12 @@ def main():
 
     err = {(m, th): [] for m in EXPORTS for th in GRID_ALIGNED + GENERIC}
     cka = {(m, th): [] for m in EXPORTS for th in GRID_ALIGNED + GENERIC}
+    # Shuffled control. This is the one experiment whose conclusion is "CKA does
+    # not detect X", so it needs a floor: row-shuffling the rotated branch
+    # destroys the pairing while leaving marginals, dimensionality and sample
+    # count identical, and an honest detector must collapse to ~0 there.
+    nul = {(m, th): [] for m in EXPORTS for th in GRID_ALIGNED + GENERIC}
+    shuffle = None
 
     with torch.no_grad():
         for imgs, _ in loader:
@@ -141,18 +167,24 @@ def main():
                     rhs = enn.GeometricTensor(export(y.tensor, mode),
                                               hid_type).transform(elem).tensor
                     err[(mode, th)].append(((lhs - rhs).norm() / rhs.norm()).item())
-                    cka[(mode, th)].append(linear_cka(export(y.tensor, mode).flatten(1),
-                                                       lhs.flatten(1)))
+                    X = export(y.tensor, mode).flatten(1)
+                    Y = lhs.flatten(1)
+                    cka[(mode, th)].append(linear_cka(X, Y))
+                    if shuffle is None or len(shuffle) != len(Y):
+                        shuffle = torch.randperm(len(Y))
+                    nul[(mode, th)].append(linear_cka(X, Y[shuffle]))
 
     mean = lambda v: sum(v) / len(v)
     for label, angles in [("GRID-ALIGNED (quarter turns)", GRID_ALIGNED),
                           ("GENERIC angles", GENERIC)]:
         print(f"\n=== {label} ===")
-        print(f"{'theta':>8s} " + " ".join(f"{m:>16s}" for m in EXPORTS))
-        print(f"{'':>8s} " + " ".join(f"{'err / cka':>16s}" for _ in EXPORTS))
+        print(f"{'theta':>8s} " + " ".join(f"{m:>24s}" for m in EXPORTS))
+        print(f"{'':>8s} " + " ".join(f"{'err / cka / cka null':>24s}"
+                                      for _ in EXPORTS))
         for th in angles:
-            cells = " ".join(f"{mean(err[(m, th)]):7.5f} /{mean(cka[(m, th)]):7.4f}"
-                             for m in EXPORTS)
+            cells = " ".join(
+                f"{mean(err[(m, th)]):7.5f} /{mean(cka[(m, th)]):7.4f} /{mean(nul[(m, th)]):7.4f}"
+                for m in EXPORTS)
             print(f"{th:8.4f} {cells}")
 
 
