@@ -730,7 +730,7 @@ def plot_lee(angles, data, path):
             a.spines[side].set_visible(False)
         for side in ("left", "bottom"):
             a.spines[side].set_color("#c3c2b7")
-        a.tick_params(colors=MUTED, labelcolor=INK)
+        a.tick_params(colors=MUTED, labelcolor=INK, labelsize=11)
         a.grid(color=GRID, lw=0.8, zorder=0)
         a.set_axisbelow(True)
     fig.patch.set_facecolor(SURFACE)
@@ -756,10 +756,13 @@ def plot_lee(angles, data, path):
     ax.set_xlim(0, 360)
     ax.set_ylim(0, max(series(N, "lee").max() for N in shown + [-1]) * 1.52)
     ax.set_xticks(np.arange(0, 361, 45))
-    ax.set_xlabel("rotation angle  \u03b8  (degrees)", color=INK)
-    ax.set_ylabel("relative equivariance error", color=INK)
-    ax.legend(loc="upper center", ncol=4, frameon=False, fontsize=7,
-              labelcolor=INK, columnspacing=1.0, handlelength=2.4)
+    ax.set_xlabel("rotation angle  \u03b8  (degrees)", color=INK, fontsize=11)
+    ax.set_ylabel("relative equivariance error", color=INK, fontsize=11)
+    # Two columns: finite-theta series on the left, CKA on the right.
+    h, l = ax.get_legend_handles_labels()
+    ax.legend(h[0::2] + h[1::2], l[0::2] + l[1::2], loc="upper center", ncol=2,
+              frameon=False, fontsize=11, labelcolor=INK, columnspacing=2.0,
+              handlelength=2.4)
 
     order = finite + [-1]
     nn = np.arange(len(order))
@@ -777,11 +780,13 @@ def plot_lee(angles, data, path):
         axb.plot(nn, vals, mk, color=CAT[key], lw=1.8, ms=6, mfc=SURFACE, mew=1.8,
                  zorder=3, label=label)
     axb.set_xticks(nn)
-    axb.set_xticklabels([f"C{N}" for N in finite] + ["SO(2)"], fontsize=8)
+    axb.set_xticklabels([f"C{N}" for N in finite] + ["SO(2)"], fontsize=11)
     axb.axvline(len(finite) - 0.5, color=GRID, lw=1.0, zorder=1)
     axb.set_yscale("log")
-    axb.set_ylabel("equivariance error  (log)", color=INK, fontsize=8)
-    axb.legend(loc="lower left", frameon=False, fontsize=7, labelcolor=INK,
+    # Headroom below the SO(2) CKA point so the legend clears the data.
+    axb.set_ylim(bottom=axb.get_ylim()[0] / 30)
+    axb.set_ylabel("equivariance error  (log)", color=INK, fontsize=11)
+    axb.legend(loc="lower left", frameon=False, fontsize=11, labelcolor=INK,
                handlelength=2.0)
 
     fig.subplots_adjust(top=0.965, bottom=0.115, left=0.075, right=0.985)
