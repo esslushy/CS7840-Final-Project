@@ -202,7 +202,7 @@ The two `lie_vs_cka*` demos are not: they need `src/Models/` on the path plus pr
 checkpoints from `src/models/` (`classification_*_cnn_dataset_cifar` and
 `gradient_field_*_unet_dataset_mnist`) and a dataset under `src/data/`. All three are
 resolved from `__file__` via `SRC_ROOT`, so the scripts still run from any working
-directory — but `models/` is gitignored, so a fresh clone must train those four
+directory — but `models/` is created at runtime, so a fresh copy must train those four
 checkpoints first. That dependency is why these two sit here rather than in
 `escnn_experiments/`: they critique the same convention, but with trained models
 instead of an architectural guarantee.

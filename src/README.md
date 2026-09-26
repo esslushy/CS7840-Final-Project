@@ -28,9 +28,8 @@ cd src
 python classification.py --model cnn --dataset cifar --rotation --seed 0
 ```
 
-`slurm/train.sbatch` does the `cd` for you. Everything in `metric_demos/`,
-`escnn_experiments/` and `figures/` resolves paths from `__file__` instead and runs from
-anywhere.
+Everything in `metric_demos/`, `escnn_experiments/` and `figures/` resolves paths from
+`__file__` instead and runs from anywhere.
 
 ## The task scripts
 
@@ -100,8 +99,7 @@ sweep:
   biased variant.
 - **`Random90Rotation`** — the augmentation. A uniform random `k·90°` per sample.
 - **`save_all`** — atomic write-temp-then-rename of stats and weights, every epoch, so
-  an interrupted run cannot leave a corrupt file. This is what makes `--resume` and the
-  SLURM completion check work.
+  an interrupted run cannot leave a corrupt file. This is what makes `--resume` work.
 - **`set_seed`**, **`so2_eval_angles`**, **`rotate_2d`** — seeding of all four RNGs;
   n evenly spaced SO(2) elements excluding the identity, returned with integer-degree
   labels for use as JSON keys; and 2D vector rotation.
@@ -117,7 +115,7 @@ Three folders here hold output, not code.
 
 **`results/`** — 660 JSONs, `<task>_<regime>_<model>_dataset_<dataset>_seed_<n>_statistics.json`,
 one per config per seed (66 configs = 33 matched `learned_equivariant` /
-`non_equivariant` pairs × 10 seeds). Tracked in git; they are the sweep's actual data.
+`non_equivariant` pairs × 10 seeds). Included in the repository; they are the sweep's actual data.
 Each file is a dict of parallel lists, index = epoch, length `NUM_EPOCHS + 1` (index 0
 is the pre-training eval):
 
@@ -134,13 +132,13 @@ Angles are string keys (`"0"`, `"90"`, …). The regression tasks record only
 Despite the name, `equivariant_loss` holds CKA *similarity*: higher is more equivariant.
 
 **`models/`** — `<tag>_model.pth` state dicts, last epoch only, written every epoch by
-`save_all`. Gitignored (`models/` in `.gitignore`), so a fresh clone has none; the two
+`save_all`. Created at runtime and not included, so a fresh copy has none; the two
 `lie_vs_cka*` demos need the `classification_*_cnn_dataset_cifar` and
 `gradient_field_*_unet_dataset_mnist` checkpoints and will fail without them.
 
 **`data/`** — torchvision download target (MNIST, CIFAR-10, STL-10, CelebA).
-Gitignored, shared by every thread including `escnn_experiments/`, which resolves it
-from `__file__`.
+Created at runtime and not included, shared by every thread including
+`escnn_experiments/`, which resolves it from `__file__`.
 
 ## Two caveats before citing any sweep number
 

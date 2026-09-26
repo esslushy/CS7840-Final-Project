@@ -61,11 +61,10 @@ Full tables: [`src/figures/README.md`](src/figures/README.md) and
 | [`src/escnn_experiments/`](src/escnn_experiments/) | The half of that thread needing an exactly-equivariant escnn model as ground truth. Has its own venv — see below. |
 | [`src/Models/`](src/Models/) | Network architectures, one module per task. |
 | [`src/print_digit/`](src/print_digit/) | The printed-digit (`mnist_font`) dataset and its loader. |
-| [`slurm/`](slurm/) | Cluster launchers for the sweep. |
 
 Three folders under `src/` hold generated output rather than code and are documented in
-their parents' READMEs: `results/` (660 per-seed JSONs, tracked), `models/` (`.pth`
-checkpoints, gitignored), `data/` (downloaded datasets, gitignored).
+their parents' READMEs: `results/` (660 per-seed JSONs, included), `models/` (`.pth`
+checkpoints, created at runtime), `data/` (downloaded datasets, created at runtime).
 
 ## Environments
 
@@ -85,7 +84,6 @@ explains the mechanism. Everything outside that folder uses the root venv.
 
 ```bash
 cd src && python classification.py --model cnn --dataset cifar --rotation --seed 0
-./slurm/launch_full_sweep.sh --dry-run        # from the repo root
 cd src/metric_demos && ../../.venv/bin/python3 exact_mi_demo.py
 cd src/escnn_experiments && .venv/bin/python3 equivariance_metrics_comparison.py
 ```

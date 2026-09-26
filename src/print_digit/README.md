@@ -39,4 +39,4 @@ Worth knowing, because two of these are easy to trip over:
   fails without it even for the other datasets.
 
 `classification.py` trains 400 epochs on this dataset rather than the 200 it uses for
-CIFAR, which `slurm/launch_full_sweep.sh` has to special-case in its completion check.
+CIFAR.

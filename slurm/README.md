@@ -15,7 +15,7 @@ Run every script from the **repo root**, not from this folder:
 
 | file | what it does |
 |---|---|
-| `train.sbatch` | The one job template. Not submitted directly — the launchers pass it a training script plus flags. One array task per seed, `--array=0-9`, mapping `SLURM_ARRAY_TASK_ID` to `--seed`. Requests one L40S on the `robot_learning` partition, 8 CPUs, 16 GB, 14-day limit, and `cd`s to `src/` first because the training scripts write to relative `results/` and `models/` paths. |
+| `train.sbatch` | The one job template. Not submitted directly — the launchers pass it a training script plus flags. One array task per seed, `--array=0-9`, mapping `SLURM_ARRAY_TASK_ID` to `--seed`. Requests one GPU, 8 CPUs, 16 GB, 14-day limit, and `cd`s to `src/` first because the training scripts write to relative `results/` and `models/` paths. |
 | `launch_full_sweep.sh` | **The one to use.** Every `--model` × `--dataset` × augmentation regime for the six sweep tasks, isotropic datasets excluded. Idempotent — see below. |
 | `launch_all.sh` | The earlier, simpler launcher: the six tasks at their *default* model and dataset only, both regimes, 10 seeds. Submits unconditionally with no completion check. Kept because it is the minimal reproduction path. |
 | `launch_nonsymmetric.sh` | Just the four flow/stress tasks on their symmetry-broken datasets (`buoyant`, `anisotropic`), default model. A subset of the full sweep, useful when only those need rerunning. |
@@ -41,5 +41,5 @@ produces the `learned_equivariant` tag, off produces `non_equivariant`. Job name
 
 ## Logs
 
-`logs/` collects `%x_%A_%a.out` / `.err` per array task and is gitignored. The
-launchers `mkdir -p` it, so a fresh clone needs no setup.
+`logs/` collects `%x_%A_%a.out` / `.err` per array task and is not included in the
+repository. The launchers `mkdir -p` it, so a fresh copy needs no setup.

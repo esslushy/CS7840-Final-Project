@@ -1,12 +1,7 @@
 # Sweep figures
 
 One figure script: [`fig_posters.py`](fig_posters.py), which writes a standalone
-poster per config. The claim-driven sheets that used to live here (`scissors`,
-`depth_profile`, `cost`, `headroom`, `sweep_summary`, `emergence`,
-`angle_profile`, `metric_gap`, `equivariance_vs_performance`) were removed on
-2026-09-18 in favour of the per-config posters alone. To recover any of them:
-`git checkout 82d098c -- src/figures` — but note `fig_scissors.py`, `fig_cost.py`
-and `fig_headroom.py` were never committed and are gone.
+poster per config.
 
 ## Usage
 
@@ -32,7 +27,7 @@ free knob that can score a spurious 1.0 on a shuffled control, so it is a
 robustness check, not a result.
 
 `aggregate.py` collapses 660 JSON files / 1.6 GB into ~30 MB of cached tables
-under `figures/cache/`, gitignored. Only `cka_by_epoch` is read by the posters;
+under `figures/cache/`, created on first run and not included in the repository. Only `cka_by_epoch` is read by the posters;
 `perf_by_epoch` and `cka_by_angle` are still built because the headline numbers
 below come out of them.
 

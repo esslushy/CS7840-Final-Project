@@ -5,8 +5,8 @@ One module per task, each exporting the same family of architectures so that
 rather than across implementations.
 
 **Not to be confused with `../models/`** (lowercase), which holds trained `.pth`
-checkpoints and is gitignored. The two differ only in case, so they collide on
-case-insensitive filesystems (macOS, Windows) — if you clone there, expect trouble.
+checkpoints and is created at runtime. The two differ only in case, so they collide on
+case-insensitive filesystems (macOS, Windows) — if you unpack there, expect trouble.
 
 ## The shared architecture family
 
