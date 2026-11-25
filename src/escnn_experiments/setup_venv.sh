@@ -28,6 +28,21 @@ if [ ! -d "$MAIN_VENV" ]; then
     exit 1
 fi
 
+# torch is shared from the root venv, so both venvs must run the same Python
+# minor version -- and numpy 1.26.4 (needed by lie_learn) has wheels only up to
+# Python 3.12. Build the root venv with Python 3.10-3.12.
+ROOT_PY="$("$MAIN_VENV/bin/python" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+HERE_PY="$(python3 -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+if [ "$ROOT_PY" != "$HERE_PY" ]; then
+    echo "error: root venv is Python $ROOT_PY but python3 here is $HERE_PY; they must match." >&2
+    exit 1
+fi
+case "$ROOT_PY" in
+    3.10|3.11|3.12) ;;
+    *) echo "error: Python $ROOT_PY is unsupported here: numpy 1.26.4 has wheels only for 3.9-3.12." >&2
+       exit 1 ;;
+esac
+
 python3 -m venv "$HERE/.venv"
 "$HERE/.venv/bin/pip" install --upgrade pip
 
@@ -40,8 +55,8 @@ python3 -m venv "$HERE/.venv"
 # Share torch/torchvision from the root venv. Named zzz_* so it sorts last and
 # is appended after the local site-packages, keeping local numpy authoritative.
 SITE="$("$HERE/.venv/bin/python3" -c 'import site; print(site.getsitepackages()[0])')"
-python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" \
-    "$MAIN_VENV/lib/python3.10/site-packages" > "$SITE/zzz_shared_torch.pth"
+"$MAIN_VENV/bin/python" -c "import os, site; print(os.path.realpath(site.getsitepackages()[0]))" \
+    > "$SITE/zzz_shared_torch.pth"
 
 echo
 echo "verifying..."
