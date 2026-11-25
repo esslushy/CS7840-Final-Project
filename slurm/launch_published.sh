@@ -18,6 +18,8 @@
 #   --prefetch=job    (default) prefetch as a SLURM job, training depends on it
 #   --prefetch=here   prefetch now, on this node, before submitting anything.
 #                     Use this if compute nodes have no internet.
+#   --regime=baseline|equivariant|both   which training regime(s) to submit
+#                     (default both). baseline = no --rotation (non_equivariant).
 #   --prefetch=skip   no prefetch. The first training job of each dataset
 #                     downloads it and the rest wait on its lock file.
 #
@@ -46,13 +48,17 @@ NUM_EPOCHS=200            # NUM_EPOCHS in all three task scripts
 DRY_RUN=false
 PREFETCH=job
 ISOTROPIC=true
+REGIMES=(baseline equivariant)
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run)        DRY_RUN=true ;;
     --no-isotropic)   ISOTROPIC=false ;;
+    --regime=baseline)    REGIMES=(baseline) ;;
+    --regime=equivariant) REGIMES=(equivariant) ;;
+    --regime=both)        REGIMES=(baseline equivariant) ;;
     --prefetch=job|--prefetch=here|--prefetch=skip) PREFETCH="${arg#--prefetch=}" ;;
-    -h|--help)        sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)        sed -n '2,37p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -74,7 +80,7 @@ fi
 queued_seeds_for() {
   local name="$1"
   command -v squeue >/dev/null 2>&1 || return 0
-  squeue -h -u "$USER" -n "$name" -o "%K" 2>/dev/null || true
+  squeue -h -r -u "$USER" -n "$name" -o "%K" 2>/dev/null || true
 }
 
 # --- work out what needs submitting before touching the queue --------------
@@ -85,7 +91,7 @@ for config in "${CONFIGS[@]}"; do
   tag="${job%.py}"
 
   for model in "${models[@]}"; do
-    for regime in baseline equivariant; do
+    for regime in "${REGIMES[@]}"; do
       extra="--model $model --dataset $dataset"
       regime_tag="non_equivariant"
       if [[ "$regime" == "equivariant" ]]; then
