@@ -35,6 +35,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import time
 import zipfile
 from contextlib import contextmanager
@@ -47,7 +48,7 @@ import torch.nn.functional as Fn
 DATA_ROOT = Path(os.environ.get("EQUIV_DATA_DIR", "data"))
 
 # Bump when preprocessing changes, so stale caches are rebuilt rather than reused.
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 # ---------------------------------------------------------------------------
@@ -158,12 +159,18 @@ class _HTTPRangeFile(io.RawIOBase):
     def __init__(self, url):
         import requests
         self._session = requests.Session()
-        r = self._session.get(url, headers={"Range": "bytes=0-0"}, stream=True, timeout=60)
+        self._source = url
+        self._resolve()
+        self.pos = 0
+
+    def _resolve(self):
+        """Follow the redirect (DaRUS -> signed S3 URL). Called again on read errors,
+        because the signed URL expires after 48 h and a full read can take hours."""
+        r = self._session.get(self._source, headers={"Range": "bytes=0-0"}, stream=True, timeout=60)
         r.raise_for_status()
-        self.url = r.url               # follow redirects once (DaRUS -> signed S3 URL)
+        self.url = r.url
         self.size = int(r.headers["Content-Range"].split("/")[-1])
         r.close()
-        self.pos = 0
 
     def readable(self):
         return True
@@ -192,6 +199,10 @@ class _HTTPRangeFile(io.RawIOBase):
                     raise
                 print(f"[data] range read error ({e}); retrying", flush=True)
                 time.sleep(5 * (attempt + 1))
+                try:
+                    self._resolve()
+                except Exception:
+                    pass
 
     def readinto(self, b):
         n = min(len(b), self.size - self.pos)
@@ -246,39 +257,44 @@ def _apply_grid_norm(traj, mean, scale):
 # Modeling". Incompressible Navier-Stokes plus an advected smoke density, with
 # buoyancy along +y, in a closed 32 x 32 box on a 128 x 128 grid. Each file holds
 # 25 trajectories of 14 stored steps, with keys u (smoke), vx, vy in (traj, t, x, y).
+# The repo has 52 files each of train / valid / test (1,300 trajectories per
+# split, ~21.5 GB in all). Nothing here selects models or stops early on a
+# validation set, so valid is folded into training.
 
 PDEARENA_REPO = "pdearena/NavierStokes-2D"
+PDEARENA_SOURCES = {"train": ("train", "valid"), "test": ("test",)}
 
 
-def _pdearena_build(split, n_files, grid_size):
+def _pdearena_build(hf_splits, grid_size):
     import h5py
     from huggingface_hub import HfApi, hf_hub_download
 
     files = sorted(f for f in HfApi().list_repo_files(PDEARENA_REPO, repo_type="dataset")
-                   if f.startswith(f"NavierStokes2D_{split}_") and f.endswith(".h5"))
-    if len(files) < n_files:
-        raise ValueError(f"PDEArena has only {len(files)} {split} files, asked for {n_files}")
+                   if f.endswith(".h5") and f.split("_")[1] in hf_splits)
     out = []
-    for fname in files[:n_files]:
+    for i, fname in enumerate(files, 1):
         path = hf_hub_download(PDEARENA_REPO, fname, repo_type="dataset",
                                local_dir=DATA_ROOT / "pdearena_ns2d")
         with h5py.File(path, "r") as f:
-            g = f[split]
+            g = f[fname.split("_")[1]]
             # (traj, t, x, y) -> (traj, t, y, x); channels (vx, vy, smoke)
             fields = [torch.from_numpy(g[k][:].astype(np.float32)).transpose(-1, -2)
                       for k in ("vx", "vy", "u")]
         out.append(_pool(torch.stack(fields, dim=2), grid_size))
+        print(f"[data] pdearena_smoke {'+'.join(hf_splits)}: {i}/{len(files)} files", flush=True)
     return {"traj": torch.cat(out)}
 
 
-def load_pdearena_smoke(split, n_files, grid_size):
-    """Normalised (N_traj, T, 3, G, G) trajectories, channels (vx, vy, smoke)."""
-    def get(s, n):
-        return _cached(f"pdearena_smoke_{s}_{n}f_{grid_size}",
-                       lambda: _pdearena_build(s, n, grid_size))["traj"]
-    train = get("train", n_files["train"])
+def load_pdearena_smoke(split, grid_size):
+    """Normalised (N_traj, T, 3, G, G) trajectories, channels (vx, vy, smoke).
+    Every file of the HF splits in PDEARENA_SOURCES[split]."""
+    def get(s):
+        src = PDEARENA_SOURCES[s]
+        return _cached(f"pdearena_smoke_{s}_{'+'.join(src)}_{grid_size}",
+                       lambda: _pdearena_build(src, grid_size))["traj"]
+    train = get("train")
     mean, scale = _grid_norm_stats(train)
-    traj = train if split == "train" else get(split, n_files[split])
+    traj = train if split == "train" else get(split)
     return _apply_grid_norm(traj, mean, scale)
 
 
@@ -292,6 +308,9 @@ def load_pdearena_smoke(split, n_files, grid_size):
 # The file is 55 GB, but its datasets are contiguous and uncompressed, so the
 # trajectories needed are read straight out of it with HTTP range requests.
 # Train uses the first trajectories and test the last, so they never overlap.
+# Reading all 10,000 is a 55 GB transfer that can take hours, so each block of
+# 25 trajectories is saved as it arrives, and an interrupted build resumes at
+# the first missing block rather than starting over.
 
 PDEBENCH_CFD_URL = "https://darus.uni-stuttgart.de/api/access/datafile/164688"
 PDEBENCH_CFD_KEYS = ("Vx", "Vy", "density", "pressure")   # vector first, then scalars
@@ -310,9 +329,15 @@ def _pdebench_build(split, n_traj, grid_size, block=25):
     N, T, X, Y = meta["Vx"][1]
     start = 0 if split == "train" else N - n_traj
     per_traj = T * X * Y
+    blocks = _pdebench_block_dir(split, n_traj, grid_size)
+    blocks.mkdir(parents=True, exist_ok=True)
     out = []
     for lo in range(start, start + n_traj, block):
         hi = min(lo + block, start + n_traj)
+        part = blocks / f"{lo:05d}.pt"
+        if part.exists():
+            out.append(torch.load(part, weights_only=True))
+            continue
         fields = []
         for k in PDEBENCH_CFD_KEYS:
             offset, _, dtype = meta[k]
@@ -321,15 +346,23 @@ def _pdebench_build(split, n_traj, grid_size, block=25):
             a = np.frombuffer(raw, dtype=dtype).reshape(hi - lo, T, X, Y).astype(np.float32)
             fields.append(torch.from_numpy(a).transpose(-1, -2))   # (x, y) -> (y, x)
         out.append(_pool(torch.stack(fields, dim=2), grid_size))
+        _atomic_torch_save(out[-1], part)
         print(f"[data] pdebench_cfd {split}: {hi - start}/{n_traj} trajectories", flush=True)
     return {"traj": torch.cat(out)}
+
+
+def _pdebench_block_dir(split, n_traj, grid_size):
+    return DATA_ROOT / "cache" / f"pdebench_cfd_{split}_{n_traj}t_{grid_size}_blocks"
 
 
 def load_pdebench_cfd(split, n_traj, grid_size):
     """Normalised (N_traj, T, 4, G, G) trajectories, channels (vx, vy, density, pressure)."""
     def get(s, n):
-        return _cached(f"pdebench_cfd_{s}_{n}t_{grid_size}",
+        traj = _cached(f"pdebench_cfd_{s}_{n}t_{grid_size}",
                        lambda: _pdebench_build(s, n, grid_size))["traj"]
+        # the assembled cache exists now, so the resume blocks are redundant
+        shutil.rmtree(_pdebench_block_dir(s, n, grid_size), ignore_errors=True)
+        return traj
     train = get("train", n_traj["train"])
     mean, scale = _grid_norm_stats(train)
     traj = train if split == "train" else get(split, n_traj[split])
@@ -354,6 +387,8 @@ LAGRANGEBENCH_CASES = {
     "dam": "2D_DAM_5740_20kevery100",
 }
 LAGRANGEBENCH_FLUID_TYPE = 0   # particle_type of fluid particles; walls are static
+# No model selection happens on a validation set here, so valid is folded into training.
+LAGRANGEBENCH_SOURCES = {"train": ("train", "valid"), "test": ("test",)}
 
 
 def _lagrangebench_dir(case):
@@ -383,21 +418,22 @@ def _lagrangebench_build(case, split, num_particles, seed=1234):
     # A fixed generator, independent of the training seed, gives every run the same data.
     rng = np.random.default_rng(seed)
     states_t, states_tp1 = [], []
-    with h5py.File(folder / f"{split}.h5", "r") as f:
-        for key in sorted(f.keys()):
-            pos = f[key]["position"][:].astype(np.float64)              # (T, P, 2)
-            fluid = np.flatnonzero(f[key]["particle_type"][:] == LAGRANGEBENCH_FLUID_TYPE)
-            disp = pos[1:] - pos[:-1]                                    # (T-1, P, 2)
-            disp[..., periodic] -= box[periodic] * np.round(disp[..., periodic] / box[periodic])
-            # pair (t, t+1) for t = 1 .. T-2: velocity at t needs frame t-1
-            for t in range(1, pos.shape[0] - 1):
-                idx = rng.choice(fluid, size=num_particles, replace=False)
-                p_t = (pos[t, idx] - center) * pos_scale
-                v_t = disp[t - 1, idx] * pos_scale
-                p_tp1 = p_t + disp[t, idx] * pos_scale                   # unwrapped next position
-                v_tp1 = disp[t, idx] * pos_scale
-                states_t.append(np.concatenate([p_t, v_t], -1))
-                states_tp1.append(np.concatenate([p_tp1, v_tp1], -1))
+    for source in LAGRANGEBENCH_SOURCES[split]:
+        with h5py.File(folder / f"{source}.h5", "r") as f:
+            for key in sorted(f.keys()):
+                pos = f[key]["position"][:].astype(np.float64)              # (T, P, 2)
+                fluid = np.flatnonzero(f[key]["particle_type"][:] == LAGRANGEBENCH_FLUID_TYPE)
+                disp = pos[1:] - pos[:-1]                                    # (T-1, P, 2)
+                disp[..., periodic] -= box[periodic] * np.round(disp[..., periodic] / box[periodic])
+                # pair (t, t+1) for t = 1 .. T-2: velocity at t needs frame t-1
+                for t in range(1, pos.shape[0] - 1):
+                    idx = rng.choice(fluid, size=num_particles, replace=False)
+                    p_t = (pos[t, idx] - center) * pos_scale
+                    v_t = disp[t - 1, idx] * pos_scale
+                    p_tp1 = p_t + disp[t, idx] * pos_scale                   # unwrapped next position
+                    v_tp1 = disp[t, idx] * pos_scale
+                    states_t.append(np.concatenate([p_t, v_t], -1))
+                    states_tp1.append(np.concatenate([p_tp1, v_tp1], -1))
     return {"state_t": torch.from_numpy(np.stack(states_t)).float(),
             "state_tp1": torch.from_numpy(np.stack(states_tp1)).float()}
 
@@ -427,14 +463,16 @@ def load_lagrangebench(case, split, num_particles):
 # General Geometries". A hyperelastic unit cell with a random central void,
 # clamped at the bottom with tension on the top edge. Each sample has 972 mesh
 # points with one scalar stress per point. The fixed loading direction breaks
-# rotation symmetry. Split as in the Geo-FNO script: the first 1000 samples
-# are train and the last 200 are test.
+# rotation symmetry. The file holds 2,000 geometries. The test set is the last
+# 200, as in the Geo-FNO script, but training uses all of the other 1,800 rather
+# than Geo-FNO's first 1,000, so errors are not directly comparable to its
+# published numbers.
 
 GEOFNO_DRIVE_IDS = {
     "Random_UnitCell_XY_10.npy": "1I-fO-RsFvD3nqBuFrg67R0yqTFdD_gpA",      # (972, 2, 2000)
     "Random_UnitCell_sigma_10.npy": "1Ia5izgUum-IQLdO6PW70HO8AdAqA_IVb",   # (972, 2000)
 }
-GEOFNO_SPLITS = {"train": slice(0, 1000), "test": slice(-200, None)}
+GEOFNO_SPLITS = {"train": slice(0, 1800), "test": slice(-200, None)}
 
 
 def _geofno_files():
@@ -493,17 +531,22 @@ def load_geofno_elasticity(split, num_particles, subsets):
 
 if __name__ == "__main__":
     # Uses each task script's own sizes, so the caches match what training loads.
+    # --no-isotropic skips the isotropic controls, which avoids PDEBench's 55 GB read.
+    import argparse
     import fluid_flow
     import fluid_flow_particles
     import stress_prediction_particles
 
-    for ds in fluid_flow.DATASETS:
-        for split in ("train", "test"):
-            fluid_flow.make_dataset(ds, split, rotate=False)
-    for ds in fluid_flow_particles.DATASETS:
-        for split in ("train", "test"):
-            fluid_flow_particles.make_dataset(ds, split, rotate=False)
-    for ds in stress_prediction_particles.DATASETS:
-        for split in ("train", "test"):
-            stress_prediction_particles.make_dataset(ds, split, rotate=False)
-    print(f"[data] all published datasets cached under {DATA_ROOT.resolve()}")
+    ap = argparse.ArgumentParser(description="Download and cache the published datasets.")
+    ap.add_argument("--no-isotropic", action="store_true",
+                    help="skip each task's isotropic control dataset")
+    args = ap.parse_args()
+
+    for mod in (fluid_flow, fluid_flow_particles, stress_prediction_particles):
+        for ds in mod.DATASETS:
+            if args.no_isotropic and ds in mod.ISOTROPIC_DATASETS:
+                print(f"[data] skipping {ds} (isotropic control)", flush=True)
+                continue
+            for split in ("train", "test"):
+                mod.make_dataset(ds, split, rotate=False)
+    print(f"[data] published datasets cached under {DATA_ROOT.resolve()}")

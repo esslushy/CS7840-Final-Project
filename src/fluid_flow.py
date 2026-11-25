@@ -12,7 +12,8 @@ from Models.FluidFlowNets import UNet, CNN, ViT, NaiveNet
 import published_data
 import os
 
-NUM_EPOCHS = 200
+NUM_EPOCHS = 400   # published data is smaller than the old 50k synthetic sets; 400 epochs puts the
+                   # optimizer-step count in line with the image tasks at 200 (see slurm/launch_*)
 BATCH_SIZE = 64
 GRID_SIZE = 32   # both datasets are 128 x 128, average-pooled 4x
 
@@ -74,8 +75,10 @@ def rotate_flow_state_single(field, k):
 DATASETS = ("pdebench_cfd", "pdearena_smoke")
 ISOTROPIC_DATASETS = ("pdebench_cfd",)
 
-PDEARENA_FILES = {"train": 16, "test": 2}    # 25 trajectories x 13 pairs per file
-PDEBENCH_TRAJ = {"train": 400, "test": 40}   # 20 pairs per trajectory
+# All published data: PDEArena train + valid (2,600 trajectories, 33,800 pairs) /
+# test (1,300, 16,900), see published_data.PDEARENA_SOURCES. PDEBench 9,000 / 1,000
+# of its 10,000 trajectories (180,000 / 20,000 pairs), a 55 GB remote read.
+PDEBENCH_TRAJ = {"train": 9000, "test": 1000}   # 20 pairs per trajectory
 
 
 class TrajectoryPairDataset(Dataset):
@@ -112,7 +115,7 @@ def make_dataset(dataset, split, rotate):
     if dataset == "pdebench_cfd":
         traj = published_data.load_pdebench_cfd(split, PDEBENCH_TRAJ, GRID_SIZE)
     elif dataset == "pdearena_smoke":
-        traj = published_data.load_pdearena_smoke(split, PDEARENA_FILES, GRID_SIZE)
+        traj = published_data.load_pdearena_smoke(split, GRID_SIZE)
     else:
         raise ValueError(f"No such dataset: {dataset}")
     return TrajectoryPairDataset(traj, rotate=rotate)

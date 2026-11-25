@@ -44,7 +44,7 @@ mkdir -p slurm/logs
 
 PYTHON="${PYTHON:-$PROJECT_ROOT/.venv/bin/python}"
 CHECK_DONE="$PROJECT_ROOT/slurm/check_done.py"
-NUM_EPOCHS=200            # NUM_EPOCHS in all three task scripts
+NUM_EPOCHS=400            # NUM_EPOCHS in all three task scripts
 DRY_RUN=false
 PREFETCH=job
 ISOTROPIC=true
@@ -130,17 +130,21 @@ if [[ ${#SUBMISSIONS[@]} -eq 0 ]]; then
 fi
 
 # --- data ----------------------------------------------------------------
+# Without the isotropic controls the prefetch skips them too, which avoids
+# PDEBench's 55 GB remote read.
+PREFETCH_ARGS=()
+$ISOTROPIC || PREFETCH_ARGS=(--no-isotropic)
 DEPENDENCY=()
 case "$PREFETCH" in
   here)
     echo "prefetch: running src/published_data.py on this node"
-    $DRY_RUN || (cd src && "$PYTHON" published_data.py)
+    $DRY_RUN || (cd src && "$PYTHON" published_data.py ${PREFETCH_ARGS[@]+"${PREFETCH_ARGS[@]}"})
     ;;
   job)
     if $DRY_RUN; then
       echo "submit: prefetch_published (CPU), training jobs depend on it"
     else
-      prefetch_id="$(sbatch --parsable --job-name=prefetch_published slurm/prefetch.sbatch)"
+      prefetch_id="$(sbatch --parsable --job-name=prefetch_published slurm/prefetch.sbatch ${PREFETCH_ARGS[@]+"${PREFETCH_ARGS[@]}"})"
       prefetch_id="${prefetch_id%%;*}"
       echo "submit: prefetch_published -> job $prefetch_id"
       DEPENDENCY=(--dependency="afterok:$prefetch_id" --kill-on-invalid-dep=yes)

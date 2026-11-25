@@ -11,7 +11,8 @@ from torch.utils.data import Dataset, DataLoader
 from Models.StressPredictionParticlesNets import PointNet, MLP, NaiveNet, SetTransformer
 import published_data
 
-NUM_EPOCHS = 200
+NUM_EPOCHS = 400   # published data is smaller than the old 50k synthetic sets; 400 epochs puts the
+                   # optimizer-step count in line with the image tasks at 200 (see slurm/launch_*)
 BATCH_SIZE = 64
 NUM_PARTICLES = 128   # random subset of each geometry's 972 mesh points
 NUM_EVAL_ANGLES = 16
@@ -48,7 +49,7 @@ def rotate_positions(state, theta):
 #                      published_data.py on first use. Each sample is a random
 #                      NUM_PARTICLES-point subset of one geometry's 972 points.
 #                      Several subsets are drawn per geometry (ELASTICITY_SUBSETS),
-#                      because there are only 1000 train geometries.
+#                      because there are only 1,800 train geometries.
 #
 # There is no published isotropic counterpart, so this task has no isotropic
 # control dataset.
@@ -56,7 +57,7 @@ def rotate_positions(state, theta):
 DATASETS = ("geofno_elasticity",)
 ISOTROPIC_DATASETS = ()
 
-ELASTICITY_SUBSETS = {"train": 10, "test": 5}   # 1000 x 10 train, 200 x 5 test samples
+ELASTICITY_SUBSETS = {"train": 10, "test": 5}   # 1800 x 10 train, 200 x 5 test samples
 
 
 class PointStressDataset(Dataset):

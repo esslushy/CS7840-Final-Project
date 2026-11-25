@@ -62,13 +62,21 @@ use, preprocesses them once, and caches the result in `data/cache/`. Ten array t
 starting together build each cache once under a lock file. If compute nodes have no
 internet, prefetch everything on a login node with `python published_data.py`.
 
-| `--dataset` | source | symmetry | what is fetched |
-|---|---|---|---|
-| `pdebench_cfd` | PDEBench 2D compressible NS, periodic, random ICs (Takamoto et al. 2022) | C4-symmetric: isotropic control | 440 of 10,000 trajectories, read by HTTP range from a 55 GB file (≈2.4 GB) |
-| `pdearena_smoke` | PDEArena NavierStokes-2D, PhiFlow smoke plume, buoyancy +y (Gupta & Brandstetter 2022) | gravity breaks it | 18 of 156 Hugging Face files, 138 MB each (≈2.5 GB) |
-| `lagrangebench_tgv` | LagrangeBench 2D Taylor-Green vortex, SPH, periodic (Toshev et al. 2023) | C4 only: isotropic control | 448 MB Zenodo zip |
-| `lagrangebench_dam` | LagrangeBench 2D dam break, SPH, gravity | gravity breaks it | 1.4 GB Zenodo zip |
-| `geofno_elasticity` | Geo-FNO Elasticity point clouds, hyperelastic cell with void (Li et al. 2022) | fixed loading breaks it | two `.npy` files from the Geo-FNO Google Drive |
+| `--dataset` | source | symmetry | what is fetched | train / test samples |
+|---|---|---|---|---|
+| `pdebench_cfd` | PDEBench 2D compressible NS, periodic, random ICs (Takamoto et al. 2022) | C4-symmetric: isotropic control | all 10,000 trajectories (9,000 / 1,000), read by HTTP range from a 55 GB file, resumable | 180,000 / 20,000 pairs |
+| `pdearena_smoke` | PDEArena NavierStokes-2D, PhiFlow smoke plume, buoyancy +y (Gupta & Brandstetter 2022) | gravity breaks it | all 156 Hugging Face files, train + valid / test (≈21.5 GB) | 33,800 / 16,900 pairs |
+| `lagrangebench_tgv` | LagrangeBench 2D Taylor-Green vortex, SPH, periodic (Toshev et al. 2023) | C4 only: isotropic control | 448 MB Zenodo zip, train + valid / test | 18,600 / 6,200 pairs |
+| `lagrangebench_dam` | LagrangeBench 2D dam break, SPH, gravity | gravity breaks it | 1.4 GB Zenodo zip, train + valid / test | 29,925 / 9,975 pairs |
+| `geofno_elasticity` | Geo-FNO Elasticity point clouds, hyperelastic cell with void (Li et al. 2022) | fixed loading breaks it | two `.npy` files from the Geo-FNO Google Drive; 1,800 / 200 geometries | 18,000 / 1,000 point subsets |
+
+Every split each source publishes is used. Validation splits are folded into training,
+since nothing here selects models or stops early on them. For Elasticity, training on
+1,800 geometries (Geo-FNO trains on 1,000) means errors aren't directly comparable to
+published Geo-FNO numbers. The three published-data tasks train **400 epochs**, giving
+112k–212k optimizer steps, in line with the image tasks' 156k at 200 epochs.
+`python published_data.py --no-isotropic` (what `launch_published.sh --no-isotropic`
+runs) skips the isotropic controls and with them PDEBench's 55 GB read.
 
 Both grid datasets are average-pooled from 128² to 32². Average pooling commutes exactly
 with `rot90`. Normalisation scales the two velocity components by one shared factor

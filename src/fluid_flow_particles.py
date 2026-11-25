@@ -10,7 +10,8 @@ from torch.utils.data import Dataset, DataLoader
 import published_data
 import os
 
-NUM_EPOCHS = 200
+NUM_EPOCHS = 400   # published data is smaller than the old 50k synthetic sets; 400 epochs puts the
+                   # optimizer-step count in line with the image tasks at 200 (see slurm/launch_*)
 BATCH_SIZE = 64
 NUM_PARTICLES = 128   # random subset of the 2500 (TGV) / ~5740 (dam) SPH particles
 NUM_EVAL_ANGLES = 16

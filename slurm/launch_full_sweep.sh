@@ -73,15 +73,16 @@ declare -A JOB_DATASETS=(
   [stress_prediction_particles.py]="geofno_elasticity"
 )
 
-# classification trains 400 epochs on mnist_font, 200 otherwise; every other
-# job trains 200 epochs regardless of dataset (see NUM_EPOCHS in each script).
+# Epochs per run, matching NUM_EPOCHS in each script: classification trains 400
+# on mnist_font and 200 otherwise; the three published-data tasks train 400;
+# colorization and stress_prediction train 200.
 num_epochs_for() {
   local job="$1" dataset="$2"
-  if [[ "$job" == "classification.py" && "$dataset" == "mnist_font" ]]; then
-    echo 400
-  else
-    echo 200
-  fi
+  case "$job" in
+    fluid_flow.py|fluid_flow_particles.py|stress_prediction_particles.py) echo 400 ;;
+    classification.py) [[ "$dataset" == "mnist_font" ]] && echo 400 || echo 200 ;;
+    *) echo 200 ;;
+  esac
 }
 
 # Currently queued/running array task ids for a given job-name, one per line.
