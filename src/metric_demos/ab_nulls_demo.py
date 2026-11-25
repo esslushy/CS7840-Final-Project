@@ -90,8 +90,8 @@ Run: cd src/metric_demos && ../../.venv/bin/python3 ab_nulls_demo.py
 """
 import numpy as np
 
-from exact_mi_demo import (KERNELS, all_binary_images, binarize, circ_conv,
-                           quadrant_coarse_grain)
+from exact_mi_demo import (KERNELS, all_binary_images, binarize, c4_cycle, circ_conv,
+                           quadrant_coarse_grain, single_copy)
 from energy_readout_demo import (CKA_SUBSAMPLE, affine_fit, lee_assumed_identity,
                                  make_energy_readout, procrustes_fit, standardize)
 
@@ -114,9 +114,12 @@ def null_distribution(metric, X, Y, rng, n_perm=N_PERM):
 def main():
     rng = np.random.default_rng(SEED)
     images = all_binary_images()
-    rot = np.rot90(images, k=1, axes=(-2, -1))
+    # cycle pairing (see exact_mi_demo.c4_cycle): every orientation on the left
+    left, right = c4_cycle(images)
+    n = len(images)
     # Consume the RNG exactly as energy_readout_demo.main does, so sigma's M and
     # N are the same matrices and these nulls attach to the published values.
+    # (orbit_subsample there draws exactly this rng.choice.)
     _ = rng.permutation(len(images))
     _ = rng.choice(len(images), CKA_SUBSAMPLE, replace=False)
     _ = rng.permutation(CKA_SUBSAMPLE)
@@ -129,8 +132,8 @@ def main():
 
     for kname, kernel in KERNELS.items():
         equivariant = np.allclose(kernel, np.rot90(kernel))
-        fa = circ_conv(images.astype(float), kernel)
-        fb = circ_conv(rot.astype(float), kernel)
+        fa = circ_conv(left.astype(float), kernel)
+        fb = circ_conv(right.astype(float), kernel)
         thr = np.median(np.concatenate([fa.ravel(), fb.ravel()]))
         A = quadrant_coarse_grain(binarize(fa, thr)).astype(float)
         B = quadrant_coarse_grain(binarize(fb, thr)).astype(float)
@@ -144,9 +147,14 @@ def main():
             print(f"\n  {rname}")
             print(f"  {'metric':<20}{'value':>9}{'null':>9}{'sd':>8}"
                   f"{'margin':>9}   verdict")
+            # One copy of the pairs for both value and null. The fitted maps score a
+            # held-out half, and every block of the cycle stack is a full copy of
+            # the pairs, so splitting the stack would test on duplicates of the
+            # training rows; duplicated rows would also deflate the nulls.
+            X1, Y1 = single_copy(X, n), single_copy(Y, n)
             for label, fn in METRICS:
-                v = fn(X, Y)
-                mu, sd = null_distribution(fn, X, Y, rng)
+                v = fn(X1, Y1)
+                mu, sd = null_distribution(fn, X1, Y1, rng)
                 margin = mu - v          # lower-is-better: distance below null
                 verdict = ("AT NULL" if margin < 3 * max(sd, 1e-6)
                            else "clears null")

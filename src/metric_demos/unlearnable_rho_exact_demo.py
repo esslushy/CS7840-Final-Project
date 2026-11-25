@@ -53,20 +53,27 @@ distribution, and the ONLY structural difference between the scramble and merge
 families is injectivity. `mass` reports the fraction of samples the readout actually
 relabels, so the two sweeps can be compared at matched disruption.
 
+PAIRING. Every metric uses the CYCLE pairing (exact_mi_demo.c4_cycle): all four
+orientations of every image on the left, each paired with its 90-degree rotation.
+On this exhaustive space the stack is four copies of the (x, rx) pairs, so MI and
+LEE are unchanged from the upright-only pairing; nulls are taken on one copy, since
+duplicated rows would deflate them. Linear CKA uses an ORBIT-CLOSED subsample
+(1024 orbits x 4 orientations), which a uniform subsample is not.
+
 MEASURED (Laplacian, exactly equivariant; alphabet 486 symbols at 134.8
 samples/symbol, H = 7.3205 bits):
 
   readout           ok  mass  LEE_rho   LEE_I  LEEnull | linCKA    null |     MI    null  MI/H
-  identity         yes  0.00   0.0000  1.4786  1.3998  | 1.0000  0.0004 | 7.3205  0.8100 1.000
-  coord-permute    yes  0.68   1.2554  1.4786  1.3993  | 1.0000  0.0004 | 7.3205  0.8100 1.000
-  scramble p=0.10  yes  0.09   0.7710  1.4435  1.3970  | 0.5170  0.0005 | 7.3205  0.8100 1.000
-  scramble p=0.25  yes  0.34   1.1351  1.3672  1.3862  | 0.1735  0.0012 | 7.3205  0.8100 1.000
-  scramble p=0.50  yes  0.53   1.3469  1.3077  1.3933  | 0.0453  0.0022 | 7.3205  0.8100 1.000
-  scramble p=0.75  yes  0.73   1.4182  1.3450  1.3932  | 0.0392  0.0003 | 7.3205  0.8100 1.000
-  scramble p=1.00  yes  1.00   1.4175  1.3608  1.3923  | 0.0376  0.0009 | 7.3205  0.8100 1.000
-  merge q=0.50      NO  1.00   1.4116  1.3486  1.3802  | 0.0380  0.0010 | 5.8681  0.2992 0.890
-  merge q=0.25      NO  1.00   1.3694  1.3168  1.3794  | 0.0303  0.0010 | 5.0613  0.1478 0.818
-  merge q=0.10      NO  1.00   1.3843  1.3564  1.3925  | 0.0431  0.0006 | 3.1574  0.0267 0.606
+  identity         yes  0.00   0.0000  1.4786  1.3998  | 1.0000  0.0020 | 7.3205  0.8100 1.000
+  coord-permute    yes  0.68   1.2554  1.4786  1.3993  | 1.0000  0.0020 | 7.3205  0.8100 1.000
+  scramble p=0.10  yes  0.09   0.7710  1.4435  1.3970  | 0.5117  0.0015 | 7.3205  0.8100 1.000
+  scramble p=0.25  yes  0.34   1.1351  1.3672  1.3862  | 0.1762  0.0012 | 7.3205  0.8100 1.000
+  scramble p=0.50  yes  0.53   1.3469  1.3077  1.3933  | 0.0515  0.0013 | 7.3205  0.8100 1.000
+  scramble p=0.75  yes  0.73   1.4182  1.3450  1.3932  | 0.0370  0.0011 | 7.3205  0.8100 1.000
+  scramble p=1.00  yes  1.00   1.4175  1.3608  1.3923  | 0.0338  0.0012 | 7.3205  0.8100 1.000
+  merge q=0.50      NO  1.00   1.4116  1.3486  1.3802  | 0.0368  0.0015 | 5.8681  0.2992 0.890
+  merge q=0.25      NO  1.00   1.3694  1.3168  1.3794  | 0.0310  0.0009 | 5.0613  0.1478 0.818
+  merge q=0.10      NO  1.00   1.3843  1.3564  1.3925  | 0.0450  0.0008 | 3.1574  0.0267 0.606
 
 FINDINGS.
 
@@ -81,9 +88,9 @@ FINDINGS.
    equivariant, not invariant.
 
 2. CKA'S GROUP IS THE ISOMETRIES, AND THE SCRAMBLE SWEEP WALKS IT OUT. 1.0000 ->
-   0.5170 -> 0.1735 -> 0.0453 -> 0.0392 -> 0.0376 as p goes 0 -> 1. Relabeling just
-   9% of the probability mass already halves it; by p=0.5 it is at 0.0453 against a
-   0.0022 null and has effectively given up. Exact MI is 7.3205 on every one of
+   0.5117 -> 0.1762 -> 0.0515 -> 0.0370 -> 0.0338 as p goes 0 -> 1. Relabeling just
+   9% of the probability mass already halves it; by p=0.5 it is at 0.0515 against a
+   0.0013 null and has effectively given up. Exact MI is 7.3205 on every one of
    those rows, to the last bit.
 
 3. THE MI INVARIANCE IS AN IDENTITY, NOT A MEASUREMENT.
@@ -94,10 +101,10 @@ FINDINGS.
 
 4. THE CONFLATION, WHICH IS THE POINT. Two readouts that CKA scores the same:
 
-       scramble p=1.00  lossless bijection          linCKA 0.0376   MI 7.3205 (MI/H 1.000)
-       merge    q=0.10  90% of the alphabet gone    linCKA 0.0431   MI 3.1574 (MI/H 0.606)
+       scramble p=1.00  lossless bijection          linCKA 0.0338   MI 7.3205 (MI/H 1.000)
+       merge    q=0.10  90% of the alphabet gone    linCKA 0.0450   MI 3.1574 (MI/H 0.606)
 
-   A 0.0056 CKA gap, both sitting on a ~0.0009 null -- and the sign is inverted:
+   A 0.0112 CKA gap, both sitting on a ~0.0012 null -- and the sign is inverted:
    CKA ranks the information-DESTROYING readout slightly above the lossless one.
    MI separates them by 4.16 bits and on an interpretable scale. One of these
    situations hides recoverable equivariance and the other destroys it; that
@@ -111,7 +118,7 @@ FINDINGS.
    genuinely not equivariant, MI is still exactly invariant to every bijective
    readout (+0.00e+00) but invariant to a LOW value: 1.2676 bits, MI/H 0.195, versus
    1.000 for the Laplacian. LEE sits at 1.3095 against a 1.3284 null and linear CKA
-   at 0.0021 against 0.0004 in every readout. So MI's constancy above is invariance
+   at 0.0026 against 0.0003 in every readout. So MI's constancy above is invariance
    to coordinates, not indifference to equivariance.
 
    The hierarchy the rows pin down, from smallest invariance group to largest:
@@ -141,8 +148,8 @@ CAVEATS.
     good coordinates"; energy_readout_demo.py covers the injective-but-nonlinear
     corner of that space.
 
-  * CKA's decay under scramble is not monotone below ~0.05 (0.0453, 0.0392, 0.0376,
-    and the merge rows wander between 0.0303 and 0.0431). Those rows are all at the
+  * CKA's decay under scramble is not monotone below ~0.05 (0.0515, 0.0370, 0.0338,
+    and the merge rows wander between 0.0310 and 0.0450). Those rows are all at the
     null and the orderings among them carry no information -- which is the reason
     finding 4 leans on the MI gap rather than on the CKA sign.
 
@@ -150,9 +157,9 @@ Run: cd src/metric_demos && ../../.venv/bin/python3 unlearnable_rho_exact_demo.p
 """
 import numpy as np
 
-from exact_mi_demo import (KERNELS, all_binary_images, binarize, circ_conv,
+from exact_mi_demo import (KERNELS, all_binary_images, binarize, c4_cycle, circ_conv,
                            exact_entropy_bits, exact_mi_bits, linear_cka,
-                           quadrant_coarse_grain)
+                           orbit_subsample, quadrant_coarse_grain, single_copy)
 
 SEED = 0
 CKA_SUBSAMPLE = 4096      # linear CKA needs an n x n Gram; exact MI uses all 65536
@@ -286,10 +293,11 @@ def summarize(got, equivariant):
 def main():
     rng = np.random.default_rng(SEED)
     images = all_binary_images()
-    rot = np.rot90(images, k=1, axes=(-2, -1))
+    # cycle pairing (see exact_mi_demo.c4_cycle): every orientation on the left
+    left, right = c4_cycle(images)
     n = len(images)
     mi_shuffle = rng.permutation(n)
-    sub = rng.choice(n, CKA_SUBSAMPLE, replace=False)
+    sub = orbit_subsample(rng, images, CKA_SUBSAMPLE)   # orbit-closed CKA rows
     cka_shuffle = rng.permutation(CKA_SUBSAMPLE)
 
     print(f"enumerated {n} images (4x4 over +-1) -> the joint distribution is "
@@ -297,8 +305,8 @@ def main():
 
     for kname, kernel in KERNELS.items():
         equivariant = np.allclose(kernel, np.rot90(kernel))
-        fa = circ_conv(images.astype(float), kernel)
-        fb = circ_conv(rot.astype(float), kernel)
+        fa = circ_conv(left.astype(float), kernel)
+        fb = circ_conv(right.astype(float), kernel)
         thr = np.median(np.concatenate([fa.ravel(), fb.ravel()]))
         A = quadrant_coarse_grain(binarize(fa, thr)).astype(float)
         B = quadrant_coarse_grain(binarize(fb, thr)).astype(float)
@@ -329,10 +337,12 @@ def main():
             mass = float((Za != codebook[ida]).any(1).mean())
             h = exact_entropy_bits(Za)
             mi = exact_mi_bits(Za, Zb)
-            mi_null = exact_mi_bits(Za, Zb[mi_shuffle])
+            # nulls on one copy of the pairs: duplicated cycle rows would deflate them
+            Za1, Zb1 = single_copy(Za, n), single_copy(Zb, n)
+            mi_null = exact_mi_bits(Za1, Zb1[mi_shuffle])
             Xs, Ys = Za[sub], Zb[sub]
             r = dict(lee_rho=lee(Za, Zb, RHO), lee_i=lee(Za, Zb, None),
-                     lee_null=lee(Za, Zb[mi_shuffle], RHO),
+                     lee_null=lee(Za1, Zb1[mi_shuffle], RHO),
                      cka=linear_cka(Xs, Ys), cka_null=linear_cka(Xs, Ys[cka_shuffle]),
                      mi=mi, mi_null=mi_null, mih=mi / h if h > 0 else 0.0)
             got[rname] = r

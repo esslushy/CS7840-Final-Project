@@ -74,10 +74,14 @@ def parse_config(stem: str) -> dict:
 
 
 def load_one(path: Path):
-    """Return (cka_epoch_rows, cka_angle_rows, perf_rows) for a single results file."""
+    """Return (cka_epoch_rows, cka_angle_rows, perf_rows, pairing) for a single
+    results file. `pairing` is "cycle" for files written after the switch to the
+    cycle pairing (see utils.cycle_pairs) and "star" for older files, which
+    compared upright features against each rotation separately."""
     cfg = parse_config(path.stem)
     with path.open() as f:
         d = json.load(f)
+    pairing = d.get("equivariance_pairing", "star")
 
     el = d["equivariant_loss"]
     n_epochs = len(el)
@@ -126,10 +130,10 @@ def load_one(path: Path):
                         float(train_loss[e]) if e < len(train_loss) else np.nan,
                         float(train_acc[e]) if e < len(train_acc) else np.nan)
             )
-    return cka_epoch, cka_angle, perf
+    return cka_epoch, cka_angle, perf, pairing
 
 
-ID = ["task", "model", "dataset", "augmented", "seed"]
+ID =["task", "model", "dataset", "augmented", "seed"]
 
 
 def main():
@@ -139,11 +143,22 @@ def main():
     print(f"reading {len(paths)} results files from {RESULTS} ...")
 
     A, B, C = [], [], []
+    pairings = {}
     for i, p in enumerate(paths, 1):
-        a, b, c = load_one(p)
+        a, b, c, pairing = load_one(p)
         A.extend(a); B.extend(b); C.extend(c)
+        pairings.setdefault(pairing, []).append(p.name)
         if i % 50 == 0 or i == len(paths):
             print(f"  {i}/{len(paths)}  (rows: {len(A):,} epoch / {len(B):,} angle)")
+
+    # The star and cycle pairings measure different things (per-angle consistency
+    # from upright inputs vs. one shared map from every orientation), so pooling
+    # them would silently mix two metrics into one figure.
+    if len(pairings) > 1:
+        detail = "; ".join(f"{k}: {len(v)} files, e.g. {v[0]}" for k, v in pairings.items())
+        raise SystemExit(f"results mix equivariance pairings ({detail}). "
+                         f"Regenerate or separate them before aggregating.")
+    print(f"equivariance pairing: {next(iter(pairings))}")
 
     cka_by_epoch = pd.DataFrame(
         A, columns=ID + ["epoch", "layer", "layer_idx", "depth_frac", "n_layers"] + list(STATS))

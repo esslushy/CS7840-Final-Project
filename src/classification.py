@@ -8,7 +8,7 @@ import json
 from argparse import ArgumentParser
 from pathlib import Path
 import sys
-from utils import Random90Rotation, EquivarianceTracker, set_seed, save_all
+from utils import Random90Rotation, EquivarianceTracker, set_seed, save_all, update_cycle, loader_kwargs
 from print_digit import load_mnist_font_dataset
 
 if "mnist_font" in sys.argv:
@@ -36,9 +36,9 @@ def main(model: str, dataset: str, rotation: bool, holdout: str, thicker: bool, 
     else:
         raise Exception("Unknown Dataset")
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE,
-                                              shuffle=True, num_workers=2)
+                                              shuffle=True, **loader_kwargs(device))
     testloader = torch.utils.data.DataLoader(testset, batch_size=BATCH_SIZE,
-                                             shuffle=False, num_workers=2)
+                                             shuffle=False, **loader_kwargs(device))
 
     if model == "vit":
         net = ViT(image_size=32 if dataset == "cifar" else 28, patch_size=4, num_classes=10,
@@ -171,10 +171,11 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
             inputs = inputs.to(device)
             labels = labels.to(device)
 
-            # unrotated activations, used as the equivariance reference
+            # unrotated activations: orientation 0 of the cycle
             output, logits, layers = net(inputs)
             running_test_loss[0] += criterion(logits, labels).item()
             running_test_accuracy[0] += accuracy(output, labels).item()
+            layers_by_rot = [layers]
 
             for angle in ANGLES:
                 k = angle // 90
@@ -183,14 +184,18 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
 
                 running_test_loss[angle] += criterion(logits_rot, labels).item()
                 running_test_accuracy[angle] += accuracy(output_rot, labels).item()
+                layers_by_rot.append(layers_rot)
 
-                for key in layers.keys():
-                    running_equivariant[key][angle].update(layers[key], layers_rot[key])
+            # cycle pairing: every orientation vs. the one `step` quarter turns on
+            for key in layers.keys():
+                update_cycle([running_equivariant[key][a] for a in ANGLES],
+                             [L[key] for L in layers_by_rot])
 
     n_test = len(testloader)
     statistics["test_loss"].append({angle: v / n_test for angle, v in running_test_loss.items()})
     statistics["test_accuracy"].append({angle: v / n_test for angle, v in running_test_accuracy.items()})
-    # store the full tracker stats (z, p, floor_std, ...) per layer, per angle
+    # store the full tracker stats per layer, per angle (cycle pairing, see utils.update_cycle)
+    statistics["equivariance_pairing"] = "cycle"
     statistics["equivariant_loss"].append({
         key: {angle: running_equivariant[key][angle].compute_stats() for angle in ANGLES}
         for key in running_equivariant

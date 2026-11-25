@@ -4,9 +4,14 @@
 # --rotation flag off/on) x seeds 0-9, for classification, colorization,
 # fluid_flow, fluid_flow_particles, stress_prediction and
 # stress_prediction_particles -- restricted to each script's non-isotropic
-# dataset(s) (classification/colorization have none named "isotropic" so all
-# of their datasets run; the flow/stress scripts skip "isotropic" and use
-# their symmetry-broken dataset instead).
+# dataset(s) (classification/colorization have no isotropic dataset so all
+# of their datasets run; the flow/stress scripts skip their isotropic control
+# -- pdebench_cfd, lagrangebench_tgv, isotropic -- and use their symmetry-broken
+# dataset instead).
+#
+# The flow/stress datasets are published simulations that download on first
+# use (src/published_data.py). If compute nodes have no internet, prefetch them
+# once on a login node first:  cd src && python published_data.py
 #
 # Before submitting each (job, model, dataset, regime) job array, per-seed
 # completion is checked two ways and already-done seeds are dropped from the
@@ -42,10 +47,10 @@ declare -A JOB_MODELS=(
 declare -A JOB_DATASETS=(
   [classification.py]="cifar mnist_font"
   [colorization.py]="cifar stl10"
-  [fluid_flow.py]="buoyant"
-  [fluid_flow_particles.py]="buoyant"
+  [fluid_flow.py]="pdearena_smoke"
+  [fluid_flow_particles.py]="lagrangebench_dam"
   [stress_prediction.py]="anisotropic"
-  [stress_prediction_particles.py]="anisotropic"
+  [stress_prediction_particles.py]="geofno_elasticity"
 )
 
 # classification trains 400 epochs on mnist_font, 200 otherwise; every other

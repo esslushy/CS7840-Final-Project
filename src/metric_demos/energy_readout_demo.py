@@ -50,6 +50,14 @@ representation that is genuinely NOT equivariant. CKA and MI must drop there,
 or they would merely be responding to the readout's structure rather than to
 equivariance.
 
+PAIRING. Every metric uses the CYCLE pairing (exact_mi_demo.c4_cycle): all four
+orientations of every image on the left, each paired with its 90-degree rotation.
+On this exhaustive space the stack is four copies of the (x, rx) pairs, so MI and
+LEE are unchanged from the upright-only pairing. Nulls and the held-out fits of
+family B use one copy: duplicated rows would deflate a null, and a held-out half
+of the stack would duplicate the training half. The C metrics use an
+ORBIT-CLOSED subsample (1024 orbits x 4 orientations).
+
 MEASURED.
 
   Laplacian (exactly equivariant), MI/H = 1.000 under BOTH readouts:
@@ -58,9 +66,9 @@ MEASURED.
     A1  LEE, assumed rho=I      1.4933 FAILS      1.3640 FAILS
     B1  affine fit              0.0000 detects    0.6723 FAILS
     B2  Procrustes              0.0000 detects    0.7225 FAILS
-    C1  linear CKA              1.0000 detects    0.7379 detects  (null 0.0029)
-    C2  RBF CKA                 1.0000 detects    0.8634 detects  (null 0.0042)
-    C3  SVCCA                   1.0000 detects    0.7802 detects  (null 0.0459)
+    C1  linear CKA              1.0000 detects    0.7335 detects  (null 0.0022)
+    C2  RBF CKA                 1.0000 detects    0.8619 detects  (null 0.0040)
+    C3  SVCCA                   1.0000 detects    0.7671 detects  (null 0.0393)
     MI  exact (bits)            7.3205 detects    7.3205 detects  (null 0.8100)
 
   The identity column is the reference and shows family B working perfectly
@@ -71,7 +79,7 @@ MEASURED.
   failure is family B's hypothesis class, not the representation.
 
   CONTROL (Sobel-x, genuinely not equivariant, same energy readout): linear CKA
-  0.0071, RBF CKA 0.0091, SVCCA 0.0876 -- all collapse to their nulls. So the C
+  0.0058, RBF CKA 0.0086, SVCCA 0.0822 -- all collapse to their nulls. So the C
   metrics were responding to equivariance, not to the readout's structure.
 
   One honest note on the control: MI still reports a margin of 1.06 bits for
@@ -79,16 +87,17 @@ MEASURED.
   a false positive -- a non-equivariant convolution genuinely does share some
   information between x and rot(x). The informative figure is MI/H: 1.000 for
   the equivariant kernel against 0.195 for Sobel-x. MI gives a graded answer
-  where CKA gives a near-binary one (1.0000 vs 0.0023), which is a point in MI's
+  where CKA gives a near-binary one (1.0000 vs 0.0017), which is a point in MI's
   favour but means MI should be read as a ratio, not thresholded.
 
 Run: cd src/metric_demos && ../../.venv/bin/python3 energy_readout_demo.py
 """
 import numpy as np
 
-from exact_mi_demo import (KERNELS, NBITS, all_binary_images, binarize, circ_conv,
-                           exact_entropy_bits, exact_mi_bits, linear_cka,
-                           quadrant_coarse_grain, rbf_cka, svcca)
+from exact_mi_demo import (KERNELS, NBITS, all_binary_images, binarize, c4_cycle,
+                           circ_conv, exact_entropy_bits, exact_mi_bits, linear_cka,
+                           orbit_subsample, quadrant_coarse_grain, rbf_cka,
+                           single_copy, svcca)
 
 SEED = 0
 CKA_SUBSAMPLE = 3000
@@ -139,17 +148,18 @@ def procrustes_fit(X, Y):
 def main():
     rng = np.random.default_rng(SEED)
     images = all_binary_images()
-    rot = np.rot90(images, k=1, axes=(-2, -1))
+    # cycle pairing (see exact_mi_demo.c4_cycle): every orientation on the left
+    left, right = c4_cycle(images)
     n = len(images)
     mi_shuffle = rng.permutation(n)
-    sub = rng.choice(n, CKA_SUBSAMPLE, replace=False)
+    sub = orbit_subsample(rng, images, CKA_SUBSAMPLE)   # orbit-closed CKA rows
     cka_shuffle = rng.permutation(CKA_SUBSAMPLE)
     sigma = make_energy_readout(rng, 4)
 
     for kname, kernel in KERNELS.items():
         equivariant = np.allclose(kernel, np.rot90(kernel))
-        fa = circ_conv(images.astype(float), kernel)
-        fb = circ_conv(rot.astype(float), kernel)
+        fa = circ_conv(left.astype(float), kernel)
+        fb = circ_conv(right.astype(float), kernel)
         thr = np.median(np.concatenate([fa.ravel(), fb.ravel()]))
         A = quadrant_coarse_grain(binarize(fa, thr)).astype(float)
         B = quadrant_coarse_grain(binarize(fb, thr)).astype(float)
@@ -163,12 +173,17 @@ def main():
                               ("ENERGY readout [Mv | (Nv)^2]", sigma(A), sigma(B))]:
             h = exact_entropy_bits(Za)
             mi = exact_mi_bits(Za, Zb)
-            mi_null = exact_mi_bits(Za, Zb[mi_shuffle])
+            # null on one copy of the pairs: duplicated cycle rows would deflate it
+            mi_null = exact_mi_bits(single_copy(Za, n), single_copy(Zb, n)[mi_shuffle])
             Xs, Ys = Za[sub], Zb[sub]
+            # The fitted maps score a HELD-OUT half. Every block of the cycle stack
+            # is a full copy of the pairs, so splitting the stack would test on
+            # duplicates of the training rows; split one copy instead.
+            Za1, Zb1 = single_copy(Za, n), single_copy(Zb, n)
             rows = [
                 ("A1  LEE, assumed rho=I", lee_assumed_identity(Za, Zb), None, False),
-                ("B1  affine fit (Lenc+15)", affine_fit(Za, Zb), None, False),
-                ("B2  Procrustes fit", procrustes_fit(Za, Zb), None, False),
+                ("B1  affine fit (Lenc+15)", affine_fit(Za1, Zb1), None, False),
+                ("B2  Procrustes fit", procrustes_fit(Za1, Zb1), None, False),
                 ("C1  linear CKA", linear_cka(Xs, Ys), linear_cka(Xs, Ys[cka_shuffle]), True),
                 ("C2  RBF CKA", rbf_cka(Xs, Ys), rbf_cka(Xs, Ys[cka_shuffle]), True),
                 ("C3  SVCCA", svcca(Xs, Ys), svcca(Xs, Ys[cka_shuffle]), True),

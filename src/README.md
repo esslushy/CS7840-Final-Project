@@ -44,15 +44,41 @@ applies `Random90Rotation` to the training data and the run is tagged
 |---|---|---|---|---|
 | `classification.py` | 10-class labels | cnn, naive, vit | cifar, mnist_font | yes |
 | `colorization.py` | grayscale → RGB | cnn, unet, naive, vit | cifar, stl10 | yes |
-| `fluid_flow.py` | next-step grid advection | cnn, unet, naive, vit | isotropic, buoyant | yes |
-| `fluid_flow_particles.py` | next-step particle state | pointnet, mlp, naive, transformer | isotropic, buoyant | yes |
+| `fluid_flow.py` | next-step grid flow state | cnn, unet, naive, vit | pdebench_cfd, pdearena_smoke | yes |
+| `fluid_flow_particles.py` | next-step particle state | pointnet, mlp, naive, transformer | lagrangebench_tgv, lagrangebench_dam | yes |
 | `stress_prediction.py` | Airy → stress/force field | cnn, unet, naive, vit | isotropic, anisotropic | yes |
-| `stress_prediction_particles.py` | per-particle force | pointnet, mlp, naive, transformer | isotropic, anisotropic | yes |
+| `stress_prediction_particles.py` | positions → per-point stress | pointnet, mlp, naive, transformer | geofno_elasticity | yes |
 | `gradient_field.py` | Sobel (dI/dx, dI/dy) field | cnn, unet, naive, vit | cifar, mnist | no |
 | `image_flow.py` | wave-surface flow field | cnn, unet, naive, vit | isotropic, directional | no |
 | `image_inversion.py` | pixel inversion | cnn, naive, vit | cifar, mnist | no |
 
-The last three are not in the sweep and have no per-seed results. `gradient_field.py`
+The last three are not in the sweep and have no per-seed results.
+
+### Published datasets
+
+Three of the four physics scripts now train on published simulations rather than
+synthetic generators. [`published_data.py`](published_data.py) downloads them on first
+use, preprocesses them once, and caches the result in `data/cache/`. Ten array tasks
+starting together build each cache once under a lock file. If compute nodes have no
+internet, prefetch everything on a login node with `python published_data.py`.
+
+| `--dataset` | source | symmetry | what is fetched |
+|---|---|---|---|
+| `pdebench_cfd` | PDEBench 2D compressible NS, periodic, random ICs (Takamoto et al. 2022) | C4-symmetric: isotropic control | 440 of 10,000 trajectories, read by HTTP range from a 55 GB file (≈2.4 GB) |
+| `pdearena_smoke` | PDEArena NavierStokes-2D, PhiFlow smoke plume, buoyancy +y (Gupta & Brandstetter 2022) | gravity breaks it | 18 of 156 Hugging Face files, 138 MB each (≈2.5 GB) |
+| `lagrangebench_tgv` | LagrangeBench 2D Taylor-Green vortex, SPH, periodic (Toshev et al. 2023) | C4 only: isotropic control | 448 MB Zenodo zip |
+| `lagrangebench_dam` | LagrangeBench 2D dam break, SPH, gravity | gravity breaks it | 1.4 GB Zenodo zip |
+| `geofno_elasticity` | Geo-FNO Elasticity point clouds, hyperelastic cell with void (Li et al. 2022) | fixed loading breaks it | two `.npy` files from the Geo-FNO Google Drive |
+
+Both grid datasets are average-pooled from 128² to 32². Average pooling commutes exactly
+with `rot90`. Normalisation scales the two velocity components by one shared factor
+and subtracts no mean, because anything per-component would not commute with rotation.
+The particle sets sample a fixed `NUM_PARTICLES` subset per sample, seeded independently
+of the training seed, so every run sees the same data. On a periodic box the published
+isotropic controls are symmetric only under 90° rotations, not under the particle
+tasks' 16 SO(2) probe angles, so they are a weaker control than the analytic flows they
+replace. `stress_prediction_particles` has no published isotropic counterpart and so no
+isotropic control. `stress_prediction.py` still uses the synthetic Airy generator. `gradient_field.py`
 matters anyway: it is a genuine rotation-*covariant* vector-field task (rotating the
 image rotates the gradient vectors), and its two checkpoints are what
 `metric_demos/lie_vs_cka_vector_field_demo.py` uses to show a scalar-per-channel
@@ -100,6 +126,22 @@ sweep:
 - **`Random90Rotation`** — the augmentation. A uniform random `k·90°` per sample.
 - **`save_all`** — atomic write-temp-then-rename of stats and weights, every epoch, so
   an interrupted run cannot leave a corrupt file. This is what makes `--resume` work.
+- **`update_cycle`** — what the task scripts call. Scores every step of the cycle pairing
+  (below) from **one** centered Gram matrix per layer per batch: each step's rotated side
+  is a reordering of the same stacked rows, so its Gram is a row/column permutation, and
+  the denominators are shared by all steps. One fp32 matmul, then float64 throughout,
+  which also fixes a float32 cancellation that scored exactly-equivariant 32×32 inputs at
+  0.9945. Matches `update(*cycle_pairs(...))` to ~1e−8.
+- **`loader_kwargs`** — DataLoader settings: workers from `SLURM_CPUS_PER_TASK` (half
+  each for the persistent train and test loaders, at most 4), `pin_memory` on CUDA.
+- **`cycle_pairs`** — the reference definition of the pairs. All N orientations of the batch
+  (the identity plus every probe angle) go on the left, each paired with the orientation
+  `step` group elements further on. One score therefore has to hold from *every*
+  orientation, not only from upright inputs, and that is what lets a score of 1 certify a
+  group homomorphism (an orthogonal one, for linear CKA) rather than per-angle
+  consistency. For C4 the 90° score already implies the 180° and 270° ones; they are
+  recorded anyway. The particle tasks' 16 probe angles are the multiples of 360°/17, so
+  their group is C17.
 - **`set_seed`**, **`so2_eval_angles`**, **`rotate_2d`** — seeding of all four RNGs;
   n evenly spaced SO(2) elements excluding the identity, returned with integer-degree
   labels for use as JSON keys; and 2D vector rotation.
@@ -131,12 +173,22 @@ Angles are string keys (`"0"`, `"90"`, …). The regression tasks record only
 `equivariant_loss`, `train_loss` and `test_loss` — no accuracy keys at all.
 Despite the name, `equivariant_loss` holds CKA *similarity*: higher is more equivariant.
 
+**Pairing.** Files written by the current code also carry
+`"equivariance_pairing": "cycle"`, and `equivariant_loss[...][angle]` is the cycle score
+for that step (see `cycle_pairs`). The 660 files in `results/` predate the change and have
+no such key: they use the *star* pairing, upright features against each rotation
+separately, which supports ruling equivariance out but not certifying a homomorphism.
+`figures/aggregate.py` reads a missing key as `"star"` and refuses to pool the two
+pairings, so the sweep has to be re-run before cycle-based figures can be built.
+
 **`models/`** — `<tag>_model.pth` state dicts, last epoch only, written every epoch by
 `save_all`. Created at runtime and not included, so a fresh copy has none; the two
 `lie_vs_cka*` demos need the `classification_*_cnn_dataset_cifar` and
 `gradient_field_*_unet_dataset_mnist` checkpoints and will fail without them.
 
-**`data/`** — torchvision download target (MNIST, CIFAR-10, STL-10).
+**`data/`** — download target for torchvision (MNIST, CIFAR-10, STL-10) and for the
+published physics datasets, with their preprocessed caches in `data/cache/`. Set
+`EQUIV_DATA_DIR` to put the physics data somewhere else, such as shared cluster scratch.
 Created at runtime and not included, shared by every thread including
 `escnn_experiments/`, which resolves it from `__file__`.
 

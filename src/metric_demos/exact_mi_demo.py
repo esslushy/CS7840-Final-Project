@@ -66,20 +66,31 @@ WHY CKA FAILS: IT IS AN ISOMETRY-INVARIANT MEASURE, AND RBF DOES NOT CHANGE THAT
   why RBF buys nothing here.
 
   The readouts below are ordered to separate the three invariance groups, and the
-  measured numbers pin each metric to its group exactly:
+  measured numbers pin each metric to its group exactly (full 16-bit pattern,
+  Laplacian):
 
     readout            nature                          exact MI  linCKA  rbfCKA  SVCCA
     identity           reference                        15.1834  1.0000  1.0000  1.0000
     bit-permute        bijective, isometry              15.1834  1.0000  1.0000  1.0000
-    ill-cond. linear   bijective, linear, NOT isometry  15.1834  0.0396  0.0525  1.0000
-    alphabet-permute   bijective, NOT linear            15.1834  0.0044  0.0071  0.0559
-    lossy-8bit         MANY-TO-ONE, info destroyed       3.1495  0.3892  0.3863  0.4352
+    ill-cond. linear   bijective, linear, NOT isometry  15.1834  0.0982  0.1209  1.0000
+    alphabet-permute   bijective, NOT linear            15.1834  0.0043  0.0069  0.0577
+    lossy-half         MANY-TO-ONE, info destroyed       3.1300  0.3918  0.3893  0.4256
 
   Read the third row: an invertible LINEAR map with condition number 1e3 is
-  enough to take both CKA variants from 1.0000 to ~0.04, while SVCCA sits at
+  enough to take both CKA variants from 1.0000 to ~0.1, while SVCCA sits at
   1.0000 -- because CCA is invariant to every invertible linear map, a strictly
-  larger group. And linCKA 0.0396 vs rbfCKA 0.0525 is the whole answer to
+  larger group. And linCKA 0.0982 vs rbfCKA 0.1209 is the whole answer to
   "does RBF help": no, they fail together.
+
+PAIRING. Every metric here uses the CYCLE pairing (c4_cycle): all four
+  orientations of every image on the left, each paired with its 90-degree
+  rotation, so one score of 1 certifies a homomorphism rather than per-angle
+  consistency from upright inputs. On this exhaustive space the stack is four
+  copies of the (x, rx) pairs, so every MI value is identical to the upright-only
+  pairing; the shuffled nulls use one copy, because duplicated rows would deflate
+  them. CKA and SVCCA use an ORBIT-CLOSED subsample (orbit_subsample: 1024
+  orbits x 4 orientations), since a uniform random subsample is not closed under
+  rotation and the cycle argument needs it to be.
 
   So the hierarchy of invariance groups is nested and each metric sits in one:
 
@@ -201,11 +212,11 @@ DOES THE SAME UNIQUENESS ARTIFACT INFLATE CKA? NO -- IT DEFLATES IT.
   MI/H = 1.000 says the representation carries EVERYTHING about its rotated
   counterpart -- perfect equivariance in the information sense -- and it says so
   identically in scrambled coordinates. CKA in those same coordinates reports
-  0.0044, which is BELOW its own shuffled control of 0.0062: not merely degraded
+  0.0043, which is BELOW its own shuffled control of 0.0062: not merely degraded
   but actively asserting that no relationship exists, for a representation that
   is provably perfectly equivariant.
 
-  Under lossy-8bit, MI correctly falls to 3.15 bits (MI/H = 0.399). It is not
+  Under lossy-half, MI correctly falls to 3.13 bits (MI/H = 0.399). It is not
   blindly invariant to everything -- it drops precisely when information is
   genuinely destroyed.
 
@@ -214,14 +225,14 @@ THE HEADLINE: CKA CONFLATES THREE SITUATIONS THAT MI SEPARATES.
   At the valid (quadrant coarse-grained) granularity, with nulls shown:
 
     situation                                  MI    null    CKA   CKA null
-    exactly equivariant, natural coordinates  7.32   0.81  1.0000    0.0017
-    exactly equivariant, scrambled coords     7.32   0.81  0.1113    0.0030
-    genuinely NOT equivariant (Sobel-x)       1.27   0.20  0.0018    0.0009
+    exactly equivariant, natural coordinates  7.32   0.81  1.0000    0.0018
+    exactly equivariant, scrambled coords     7.32   0.81  0.1148    0.0038
+    genuinely NOT equivariant (Sobel-x)       1.27   0.20  0.0013    0.0015
 
-  CKA scores the perfectly-equivariant-but-scrambled case (0.1113) in the same
+  CKA scores the perfectly-equivariant-but-scrambled case (0.1148) in the same
   range as, and depending on the readout below, the genuinely non-equivariant
-  one (0.0018) -- it cannot separate "equivariant in bad coordinates" from "not
-  equivariant". MI separates them cleanly and on an interpretable scale: 7.32 of
+  one (0.0013, at its own null) -- it cannot separate "equivariant in bad
+  coordinates" from "not equivariant". MI separates them cleanly and on an interpretable scale: 7.32 of
   7.32 bits (MI/H = 1.000) versus 1.27 of 6.49 (MI/H = 0.195).
 
   This is the cleanest statement of the whole line of experiments in this
@@ -257,6 +268,68 @@ def all_binary_images():
     over images is exactly uniform and exactly known."""
     combos = itertools.product([-1, 1], repeat=NBITS)
     return np.fromiter(itertools.chain(*combos), dtype=np.int8).reshape(-1, SIDE, SIDE)
+
+
+# ------------------------------------------------------------ cycle pairing
+
+def _codes(images):
+    """Each +-1 image as an integer, for set comparisons."""
+    bits = images.reshape(len(images), -1) > 0
+    return (bits * (1 << np.arange(bits.shape[1]))).sum(1)
+
+
+def c4_cycle(images, step=1):
+    """The CYCLE pairing for C4: every orientation of every image on the left,
+    each paired with its rotation by `step` quarter turns on the right.
+
+        left  = [x, rx, r^2x, r^3x]          (stacked over all images)
+        right = [r^step x, r^(step+1) x, ...]
+
+    Pairing only upright x with r x (the "star") never tests the map on rotated
+    inputs, so a perfect score does not imply a group representation. On a set
+    closed under rot90 (asserted here), one score of 1 at step 1 forces a single
+    map from every orientation, hence a homomorphism: MI/H = 1 gives a bijection
+    on feature values, linear CKA = 1 an orthogonal map.
+
+    On the exhaustive space this is REDUNDANT, and kept for consistency: rot90
+    maps the set onto itself, so the stack holds exactly four copies of the
+    pairs (x, r^step x). MI is therefore identical to a single copy. Its shuffled
+    null is NOT: duplicated rows deflate a plug-in null, so nulls are computed
+    on one copy (`single_copy`)."""
+    rots = [np.rot90(images, j, axes=(-2, -1)) for j in range(4)]
+    base = np.sort(_codes(images))
+    for j in range(1, 4):
+        assert np.array_equal(np.sort(_codes(rots[j])), base), \
+            "c4_cycle needs a set closed under rot90"
+    left = np.concatenate(rots)
+    right = np.concatenate([rots[(j + step) % 4] for j in range(4)])
+    return left, right
+
+
+def single_copy(Z, n_images):
+    """First block of a c4_cycle stack: one copy of the (x, r x) pairs."""
+    return Z[:n_images]
+
+
+def orbit_subsample(rng, images, n_rows):
+    """Row indices into a c4_cycle stack covering n_rows // 4 whole ORBITS, so
+    the subsample itself is closed under rot90 (a uniform random subsample is
+    not, and on a non-closed set the cycle argument fails). Draws from `rng`
+    exactly as rng.choice(len(images), n_rows, replace=False) did, so every
+    later draw -- readout parameters, nulls -- is unchanged."""
+    n = len(images)
+    draws = rng.choice(n, n_rows, replace=False)
+    rots = np.stack([_codes(np.rot90(images, j, axes=(-2, -1))) for j in range(4)])
+    orbit_id = rots.min(0)
+    bases, seen = [], set()
+    for i in draws:
+        if orbit_id[i] not in seen:
+            seen.add(orbit_id[i])
+            bases.append(i)
+        if len(bases) == n_rows // 4:
+            break
+    bases = np.asarray(bases)
+    return np.concatenate([bases + j * n for j in range(4)])
 
 
 def circ_conv(images, kernel):
@@ -428,14 +501,16 @@ def main():
         ref = np.array([convolve2d(im, k, mode="same", boundary="wrap") for im in probe])
         assert np.allclose(circ_conv(probe, k), ref), "circ_conv disagrees with scipy"
 
-    rot = np.rot90(images, k=1, axes=(-2, -1))
-    sub = rng.choice(len(images), CKA_SUBSAMPLE, replace=False)
+    # cycle pairing: every orientation on the left, its 90-degree rotation on the right
+    left, right = c4_cycle(images)
+    n = len(images)
+    sub = orbit_subsample(rng, images, CKA_SUBSAMPLE)   # orbit-closed CKA rows
     shuffle = rng.permutation(CKA_SUBSAMPLE)
     readouts = make_readouts(rng)
 
     for kname, kernel in KERNELS.items():
         equivariant = np.allclose(kernel, np.rot90(kernel))
-        fa, fb = circ_conv(images.astype(float), kernel), circ_conv(rot.astype(float), kernel)
+        fa, fb = circ_conv(left.astype(float), kernel), circ_conv(right.astype(float), kernel)
         thr = np.median(np.concatenate([fa.ravel(), fb.ravel()]))
         A, B = binarize(fa, thr), binarize(fb, thr)
 
@@ -444,23 +519,25 @@ def main():
               f"-> representation {'EXACTLY equivariant' if equivariant else 'NOT equivariant'}")
         print("=" * 104)
 
-        mi_shuf_full = rng.permutation(len(A))
+        mi_shuf_full = rng.permutation(n)
         for gname, grain in [("FULL 16-bit pattern", lambda P: P),
                              ("quadrant coarse-grain", quadrant_coarse_grain)]:
             Ag, Bg = grain(A), grain(B)
             nsym = len(np.unique(Ag, axis=0))
+            # samples/symbol counts distinct inputs: the cycle stack is 4 copies
             print(f"\n  granularity: {gname}   "
-                  f"symbols={nsym}  samples/symbol={len(A) / nsym:.1f}  "
+                  f"symbols={nsym}  samples/symbol={n / nsym:.1f}  "
                   f"H={exact_entropy_bits(Ag):.4f} bits"
-                  f"{'   <- UNDERSAMPLED, null is invalid' if len(A) / nsym < 10 else ''}")
+                  f"{'   <- UNDERSAMPLED, null is invalid' if n / nsym < 10 else ''}")
             print(f"  {'readout':<18s} {'nature':<32s} {'MI':>8s} {'MIshuf':>7s} "
                   f"{'margin':>7s} {'MI/H':>6s} {'linCKA':>7s} {'rbfCKA':>7s} "
                   f"{'rbfshuf':>8s} {'SVCCA':>7s}")
             mis = {}
             for rname, sigma, nature in readouts:
                 Za, Zb = sigma(Ag), sigma(Bg)
-                mi = exact_mi_bits(Za, Zb)
-                mi_s = exact_mi_bits(Za, Zb[mi_shuf_full])
+                mi = exact_mi_bits(Za, Zb)                      # full cycle stack
+                mi_s = exact_mi_bits(single_copy(Za, n),        # null on one copy:
+                                     single_copy(Zb, n)[mi_shuf_full])  # duplicates deflate it
                 h = exact_entropy_bits(Za)
                 mis[rname] = mi
                 Xs, Ys = Za[sub], Zb[sub]

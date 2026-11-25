@@ -16,7 +16,7 @@ linear and RBF CKA, SVCCA, distance correlation, RSA — turns out to be a state
 about the coordinate system a representation happens to be written in. Mutual
 information is a statement about the representation itself, and that difference is
 measurable: on a discrete space where MI can be computed rather than estimated, a
-bijective relabeling of the readout takes linear CKA from 1.0000 to 0.0376 while MI
+bijective relabeling of the readout takes linear CKA from 1.0000 to 0.0338 while MI
 does not move by a single bit.
 
 ## Headline results
@@ -40,10 +40,10 @@ estimated):
 - Handed the **exact true ρ(g)**, LEE scores 0.0000 — and 1.2554 after merely permuting
   four coordinates, indistinguishable from its own 1.3993 shuffled null. It survives
   nothing but the coordinate system it was written in.
-- A bijective relabeling of the readout takes linear CKA **1.0000 → 0.0376** while exact
+- A bijective relabeling of the readout takes linear CKA **1.0000 → 0.0338** while exact
   MI does not move by one bit: `MI(identity) − MI(scrambled) = +0.00e+00`.
-- CKA cannot separate scrambled from destroyed. A lossless scramble scores 0.0376 and a
-  readout destroying 90% of the alphabet scores 0.0431 — it ranks the **lossy** one
+- CKA cannot separate scrambled from destroyed. A lossless scramble scores 0.0338 and a
+  readout destroying 90% of the alphabet scores 0.0450 — it ranks the **lossy** one
   higher. MI separates them by **4.16 bits** (7.3205 vs 3.1574, MI/H 1.000 vs 0.606).
 - MI is not blindly invariant: on a non-equivariant kernel it correctly reports
   MI/H 0.195 against 1.000, in every coordinate system.

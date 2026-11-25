@@ -27,6 +27,12 @@ AXIS = "#c3c2b7"
 OUT = Path(__file__).resolve().parent / "out"
 CACHE = Path(__file__).resolve().parent / "cache"
 
+# Datasets whose dynamics are rotation-symmetric by construction, so an
+# equivariance score measured on them is degenerate. "isotropic" is the old
+# synthetic name (the existing results/ files); the rest are the published
+# datasets' isotropic controls (see each task script's ISOTROPIC_DATASETS).
+ISOTROPIC_DATASETS = ("isotropic", "pdebench_cfd", "lagrangebench_tgv")
+
 TASK_LABEL = {
     "classification": "Classification",
     "colorization": "Colorization",
@@ -124,7 +130,7 @@ def common_parser(description=None):
 
 def apply_filters(df, args):
     if getattr(args, "no_isotropic", False):
-        df = df[df.dataset != "isotropic"].copy()
+        df = df[~df.dataset.isin(ISOTROPIC_DATASETS)].copy()
         df["dataset"] = df["dataset"].cat.remove_unused_categories()
         df["task"] = df["task"].cat.remove_unused_categories()
     return df

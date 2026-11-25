@@ -6,186 +6,86 @@ import torch.optim as optim
 import json
 from argparse import ArgumentParser
 from pathlib import Path
-from utils import EquivarianceTracker, set_seed, save_all, so2_eval_angles, rotate_2d
+from utils import EquivarianceTracker, set_seed, save_all, so2_eval_angles, rotate_2d, update_cycle, loader_kwargs
 from torch.utils.data import Dataset, DataLoader
 from Models.StressPredictionParticlesNets import PointNet, MLP, NaiveNet, SetTransformer
+import published_data
 
 NUM_EPOCHS = 200
 BATCH_SIZE = 64
-NUM_PARTICLES = 128
+NUM_PARTICLES = 128   # random subset of each geometry's 972 mesh points
 NUM_EVAL_ANGLES = 16
-STIFFNESS_RATIO = 2.0
 
 
 # ---------------------------------------------------------------------------
 # Rotation utilities for particle states
 # ---------------------------------------------------------------------------
 
-def rotate_stress_state(state, theta):
+def rotate_positions(state, theta):
     """
-    Rotate the input particle state (..., 4) = (x, y, fx, fy).
+    Rotate the input particle state (..., N, 2) = (x, y) by theta.
 
-    Position and force are both 2D vectors and rotate together.
+    Positions are centred on the unit cell (published_data.py), so this is
+    rotation about the cell centre.
     """
-    pos = rotate_2d(state[..., 0:2], theta)
-    force = rotate_2d(state[..., 2:4], theta)
-    return torch.cat([pos, force], dim=-1)
+    return rotate_2d(state[..., 0:2], theta)
 
 
-def rotate_stress_tensor(stress, theta):
-    """
-    Rotate the per-particle stress tensor (..., 3) = (σ_xx, σ_yy, σ_xy)
-    as a rank-2 symmetric tensor: σ' = R σ R^T.
-    """
-    c = torch.cos(theta)
-    s = torch.sin(theta)
-    c2, s2, cs = c * c, s * s, c * s
-    sxx, syy, sxy = stress[..., 0], stress[..., 1], stress[..., 2]
-    new_sxx = c2 * sxx + s2 * syy - 2 * cs * sxy
-    new_syy = s2 * sxx + c2 * syy + 2 * cs * sxy
-    new_sxy = cs * (sxx - syy) + (c2 - s2) * sxy
-    return torch.stack([new_sxx, new_syy, new_sxy], dim=-1)
-
-
-# ---------------------------------------------------------------------------
-# Analytical stress/force primitives (evaluate at arbitrary positions)
-# ---------------------------------------------------------------------------
-
-def eval_stress_force_at_points(positions, primitives, aniso=None):
-    """
-    Evaluate the analytic stress tensor and its equilibrium body force at points.
-
-    Each primitive is a Gaussian-weighted constant symmetric tensor:
-        σ(r) = Σ_p A_p g_p(r) M_p,   g_p(r) = exp(-|r - c_p|² / 2 s_p²)
-    The body force follows in closed form from f = -div(σ). Since M_p is constant,
-        div(σ)_i = Σ_j (∂_j g) M_ij = -(g / s²) (M (r - c))_i
-    so  f_i = (g / s²) (M (r - c))_i .
-
-    This is analytic (no grid, no finite differences) and exactly rotation-
-    equivariant: rotating c -> Rc and M -> R M R^T rotates f as a vector and
-    σ as a rank-2 tensor.
-
-    Args:
-        positions:  (N, 2)
-        primitives: list of (cx, cy, A, s, Mxx, Myy, Mxy)
-        aniso:      optional (a, b) fixed diagonal scaling applied as M -> S M S^T
-                    with S = diag(a, b). A non-identity, non-rotated S breaks
-                    rotation equivariance (anisotropic material).
-
-    Returns:
-        force:  (N, 2) = (fx, fy)
-        stress: (N, 3) = (σ_xx, σ_yy, σ_xy)
-    """
-    N = positions.shape[0]
-    device = positions.device
-    sxx = torch.zeros(N, device=device)
-    syy = torch.zeros(N, device=device)
-    sxy = torch.zeros(N, device=device)
-    fx = torch.zeros(N, device=device)
-    fy = torch.zeros(N, device=device)
-
-    for (cx, cy, A, s, Mxx, Myy, Mxy) in primitives:
-        dx = positions[:, 0] - cx
-        dy = positions[:, 1] - cy
-        g = A * torch.exp(-(dx * dx + dy * dy) / (2 * s * s))
-
-        M00, M01, M11 = Mxx, Mxy, Myy
-        if aniso is not None:
-            a, b = aniso
-            # M -> S M S^T with S = diag(a, b)
-            M00, M01, M11 = a * a * M00, a * b * M01, b * b * M11
-
-        # stress = g * M
-        sxx = sxx + g * M00
-        syy = syy + g * M11
-        sxy = sxy + g * M01
-
-        # force = -div(sigma) = (g / s^2) * M (r - c)
-        inv_s2 = 1.0 / (s * s)
-        fx = fx + g * inv_s2 * (M00 * dx + M01 * dy)
-        fy = fy + g * inv_s2 * (M01 * dx + M11 * dy)
-
-    force = torch.stack([fx, fy], dim=-1)          # (N, 2)
-    stress = torch.stack([sxx, syy, sxy], dim=-1)  # (N, 3)
-    return force, stress
-
-
-def random_stress_primitives(n_primitives=None):
-    """Generate a random set of stress primitives (isotropic distribution)."""
-    if n_primitives is None:
-        n_primitives = torch.randint(3, 8, (1,)).item()
-    prims = []
-    for _ in range(n_primitives):
-        cx = (torch.rand(1) * 2 - 1).item() * 0.7
-        cy = (torch.rand(1) * 2 - 1).item() * 0.7
-        s = 0.15 + torch.rand(1).item() * 0.25
-        A = (torch.rand(1) * 2 - 1).item() * 2.0
-        Mxx = (torch.rand(1) * 2 - 1).item()
-        Myy = (torch.rand(1) * 2 - 1).item()
-        Mxy = (torch.rand(1) * 2 - 1).item()
-        prims.append((cx, cy, A, s, Mxx, Myy, Mxy))
-    return prims
+# The target is a scalar stress per point (Geo-FNO's stress field: positive,
+# heavy-tailed near the void, most likely von Mises). A scalar is unchanged by
+# rotation, so the rotated target is the stress itself: the map positions ->
+# stress should be rotation-INVARIANT per point, and it is not, because the
+# loading direction is fixed.
 
 
 # ---------------------------------------------------------------------------
 # Datasets
 # ---------------------------------------------------------------------------
+#
+#   geofno_elasticity  Geo-FNO Elasticity point clouds (Li et al. 2022): a
+#                      hyperelastic unit cell with a random void, clamped at the
+#                      bottom and pulled at the top. Downloaded and cached by
+#                      published_data.py on first use. Each sample is a random
+#                      NUM_PARTICLES-point subset of one geometry's 972 points.
+#                      Several subsets are drawn per geometry (ELASTICITY_SUBSETS),
+#                      because there are only 1000 train geometries.
+#
+# There is no published isotropic counterpart, so this task has no isotropic
+# control dataset.
 
-class _StressParticleDataset(Dataset):
-    """
-    Force field -> stress tensor for a 2D elastic medium, sampled at particles.
+DATASETS = ("geofno_elasticity",)
+ISOTROPIC_DATASETS = ()
 
-    Input:  (N, 4) per sample = (x, y, fx, fy)
-    Output: (N, 3) per sample = (σ_xx, σ_yy, σ_xy)
+ELASTICITY_SUBSETS = {"train": 10, "test": 5}   # 1000 x 10 train, 200 x 5 test samples
 
-    aniso=None gives the isotropic (rotation-equivariant) medium; a fixed
-    (a, b) scaling gives an anisotropic medium that breaks rotation symmetry.
-    """
 
-    def __init__(self, n_samples=10000, num_particles=NUM_PARTICLES, rotate=False, aniso=None):
-        self.n_samples = n_samples
-        self.num_particles = num_particles
+class PointStressDataset(Dataset):
+    """Input (N, 2) = (x, y); output (N, 1) = scalar stress."""
+
+    def __init__(self, pos, stress, rotate=False):
+        self.pos = pos
+        self.stress = stress
         self.rotate = rotate
-        self.aniso = aniso
-
-        self.states = []
-        self.stresses = []
-        for _ in range(n_samples):
-            prims = random_stress_primitives()
-            pos = (torch.rand(num_particles, 2) * 2 - 1) * 0.8
-            force, stress = eval_stress_force_at_points(pos, prims, aniso=aniso)
-            self.states.append(torch.cat([pos, force], dim=-1))  # (N, 4)
-            self.stresses.append(stress)                          # (N, 3)
-
-        self.states = torch.stack(self.states)
-        self.stresses = torch.stack(self.stresses)
 
     def __len__(self):
-        return self.n_samples
+        return self.pos.shape[0]
 
     def __getitem__(self, idx):
-        state = self.states[idx]
-        stress = self.stresses[idx]
+        pos = self.pos[idx]
+        stress = self.stress[idx]
 
         if self.rotate:
             theta = torch.rand(1) * 2 * np.pi
-            state = rotate_stress_state(state, theta)
-            stress = rotate_stress_tensor(stress, theta)
+            pos = rotate_positions(pos, theta)   # stress is a scalar: unchanged
 
-        return state, stress
-
-
-class IsotropicStressParticleDataset(_StressParticleDataset):
-    def __init__(self, n_samples=10000, num_particles=NUM_PARTICLES, rotate=False):
-        super().__init__(n_samples, num_particles, rotate, aniso=None)
+        return pos, stress
 
 
-class AnisotropicStressParticleDataset(_StressParticleDataset):
-    def __init__(self, n_samples=10000, num_particles=NUM_PARTICLES, rotate=False,
-                 stiffness_ratio=STIFFNESS_RATIO):
-        # fixed (non-rotated) scaling S = diag(sqrt(ratio), 1) breaks equivariance
-        super().__init__(n_samples, num_particles, rotate,
-                         aniso=(float(np.sqrt(stiffness_ratio)), 1.0))
+def make_dataset(dataset, split, rotate):
+    if dataset != "geofno_elasticity":
+        raise ValueError(f"No such dataset: {dataset}")
+    pos, stress = published_data.load_geofno_elasticity(split, NUM_PARTICLES, ELASTICITY_SUBSETS)
+    return PointStressDataset(pos, stress, rotate=rotate)
 
 
 # ---------------------------------------------------------------------------
@@ -196,31 +96,25 @@ def main(model: str, dataset: str, rotation: bool, thicker: bool, finetune: Path
     set_seed(seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    if dataset == "isotropic":
-        trainset = IsotropicStressParticleDataset(n_samples=50000, rotate=rotation)
-        testset = IsotropicStressParticleDataset(n_samples=5000, rotate=False)
-    elif dataset == "anisotropic":
-        trainset = AnisotropicStressParticleDataset(n_samples=50000, rotate=rotation)
-        testset = AnisotropicStressParticleDataset(n_samples=5000, rotate=False)
-    else:
-        raise ValueError(f"No such dataset: {dataset}")
+    trainset = make_dataset(dataset, "train", rotate=rotation)
+    testset = make_dataset(dataset, "test", rotate=False)
 
     trainloader = DataLoader(trainset, batch_size=BATCH_SIZE,
-                             shuffle=True, num_workers=2)
+                             shuffle=True, **loader_kwargs(device))
     testloader = DataLoader(testset, batch_size=BATCH_SIZE,
-                            shuffle=False, num_workers=2)
+                            shuffle=False, **loader_kwargs(device))
 
     print(f"[{dataset}] Train: {len(trainset)} samples  |  Test: {len(testset)} samples")
 
-    # in_channels=4 (x, y, fx, fy), out_channels=3 (stress tensor)
+    # in_channels=2 (x, y), out_channels=1 (scalar stress)
     if model == "pointnet":
-        net = PointNet(width1=256 if thicker else 128, width2=256 if thicker else 64, in_channels=4, out_channels=3)
+        net = PointNet(width1=256 if thicker else 128, width2=256 if thicker else 64, in_channels=2, out_channels=1)
     elif model == "mlp":
-        net = MLP(width1=256 if thicker else 128, width2=256 if thicker else 64, in_channels=4, out_channels=3)
+        net = MLP(width1=256 if thicker else 128, width2=256 if thicker else 64, in_channels=2, out_channels=1)
     elif model == "naive":
-        net = NaiveNet(in_channels=4, out_channels=3)
+        net = NaiveNet(in_channels=2, out_channels=1)
     elif model == "transformer":
-        net = SetTransformer(dim=256 if thicker else 128, depth=1, heads=4, mlp_dim=256 if thicker else 128, in_channels=4, out_channels=3)
+        net = SetTransformer(dim=256 if thicker else 128, depth=1, heads=4, mlp_dim=256 if thicker else 128, in_channels=2, out_channels=1)
     else:
         raise ValueError(f"No such model {model}")
     net = net.to(device)
@@ -298,9 +192,8 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
 
     eval_angles, angle_labels = so2_eval_angles(NUM_EVAL_ANGLES)
 
-    # per-angle test loss (0 = unrotated). The force->stress map is EQUIVARIANT:
-    # the input state (position + force) rotates as vectors, the target stress
-    # as a rank-2 tensor.
+    # per-angle test loss (0 = unrotated). Positions rotate as vectors; the
+    # target is a scalar stress, so it is the same at every angle.
     running_test_loss = {0: 0.0}
     for deg in angle_labels:
         running_test_loss[deg] = 0.0
@@ -314,24 +207,29 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
             state = state.to(device)
             stress = stress.to(device)
 
-            # unrotated prediction + activations (equivariance reference)
+            # unrotated prediction + activations: orientation 0 of the cycle
             pred, layers = net(state)
             running_test_loss[0] += criterion(pred, stress).item()
+            layers_by_rot = [layers]
 
             for theta, deg in zip(eval_angles, angle_labels):
                 theta_t = theta.to(device)
-                state_rot = rotate_stress_state(state, theta_t)      # vectors: pos + force
-                stress_rot = rotate_stress_tensor(stress, theta_t)   # rank-2 tensor
+                state_rot = rotate_positions(state, theta_t)         # vectors: positions
                 pred_rot, layers_rot = net(state_rot)                # one forward, reused for loss + equivariance
 
-                running_test_loss[deg] += criterion(pred_rot, stress_rot).item()
+                running_test_loss[deg] += criterion(pred_rot, stress).item()   # scalar target: unrotated
+                layers_by_rot.append(layers_rot)
 
-                for key in layers.keys():
-                    running_equivariant[key][deg].update(layers[key], layers_rot[key])
+            # cycle pairing over C_{N+1} (identity + the N eval angles, which are
+            # the multiples of 360/(N+1)): every orientation vs. the one `step` on
+            for key in layers.keys():
+                update_cycle([running_equivariant[key][a] for a in angle_labels],
+                             [L[key] for L in layers_by_rot])
 
     n_test = len(testloader)
     statistics["test_loss"].append({angle: v / n_test for angle, v in running_test_loss.items()})
-    # store the full tracker stats (z, p, floor_std, ...) per layer, per angle
+    # store the full tracker stats per layer, per angle (cycle pairing, see utils.update_cycle)
+    statistics["equivariance_pairing"] = "cycle"
     statistics["equivariant_loss"].append({
         key: {deg: running_equivariant[key][deg].compute_stats() for deg in angle_labels}
         for key in running_equivariant
@@ -341,7 +239,7 @@ def update_statistics(net, criterion, statistics, trainloader, testloader, devic
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("--model", help="Which model to use", type=str, choices=("pointnet", "mlp", "naive", "transformer"), default="pointnet")
-    args.add_argument("--dataset", help="The dataset to train on.", type=str, choices=("isotropic", "anisotropic"), default="isotropic")
+    args.add_argument("--dataset", help="The dataset to train on.", type=str, choices=DATASETS, default="geofno_elasticity")
     args.add_argument("--rotation", help="Whether to train with rotation applied", action="store_true")
     args.add_argument("--thicker", help="Whether to make the dimension of the models thicker or not", action="store_true")
     args.add_argument("--finetune", help="The model to load for extra finetuning", type=Path)

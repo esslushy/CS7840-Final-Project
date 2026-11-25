@@ -71,7 +71,7 @@ def main():
     style.apply(args)
 
     df = style.load("cka_by_epoch")
-    r = summarise(df[df.dataset != "isotropic"])
+    r = summarise(df[~df.dataset.isin(style.ISOTROPIC_DATASETS)])
     rank = {m: i for i, m in enumerate(MODEL_ORDER)}
     r["model_rank"] = r.model.map(rank).fillna(len(rank))
     r = r.sort_values(["task", "dataset", "model_rank"])
